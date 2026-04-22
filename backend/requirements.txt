@@ -20,6 +20,9 @@ celery[redis]>=5.3.0
 # ML / NLP
 torch>=2.2.0
 transformers>=4.38.0
+# Required for models that ship only a slow SentencePiece tokenizer
+# (e.g. yiyanghkust/finbert-tone). Fast-tokenizer models ignore it.
+sentencepiece>=0.2.0
 datasets>=2.18.0
 accelerate>=0.27.0
 spacy>=3.7.0

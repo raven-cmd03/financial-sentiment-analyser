@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   BarChart3,
   TrendingUp,
@@ -9,45 +9,49 @@ import {
   ArrowRight,
   AlertTriangle,
   Twitter,
-} from 'lucide-react';
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { cn } from "@/lib/utils";
 
 const steps = [
   {
     icon: BarChart3,
-    title: 'Welcome to FinSentiment',
+    title: "Welcome to FinSentiment",
     description:
-      'An intelligent platform that analyzes financial news sentiment and correlates it with market movements. This system uses FinBERT, a specialized AI model for financial text analysis.',
-    note: 'Important: This system provides correlational insights, not investment advice. Sentiment is one of many factors influencing markets.',
+      "An intelligent platform that analyzes financial news sentiment and correlates it with market movements. This system uses FinBERT, a specialized NLP model for financial text.",
+    note: "This system provides correlational insights, not investment advice. Sentiment is one of many factors influencing markets.",
   },
   {
     icon: Newspaper,
-    title: 'News Collection & Analysis',
+    title: "News collection & analysis",
     description:
-      'We automatically collect financial news from multiple sources including Google News, Yahoo Finance, Alpha Vantage, and RSS feeds. Each article is analyzed using FinBERT to determine positive, negative, or neutral sentiment with confidence scores.',
+      "We automatically collect financial news from multiple sources including Google News, Yahoo Finance, Alpha Vantage, and RSS feeds. Each article is scored by FinBERT to determine positive, negative, or neutral sentiment with confidence.",
   },
   {
     icon: Twitter,
-    title: 'Social Sentiment from X',
+    title: "Social sentiment from X",
     description:
-      'Track real-time social media buzz for any stock ticker. See bullish/bearish ratios, buzz scores, and trending tickers from X (Twitter) to understand what retail investors are discussing.',
+      "Track real-time social media buzz for any stock ticker. See bullish / bearish ratios, buzz scores, and trending tickers from X to understand what retail investors are discussing.",
   },
   {
     icon: TrendingUp,
-    title: 'Market Correlations',
+    title: "Market correlations",
     description:
-      'View statistical correlations between news sentiment and stock price movements using Pearson, Spearman, time-lagged, and rolling correlation methods. Understand how sentiment relates to price action over different time horizons.',
+      "View statistical correlations between sentiment and price movements using Pearson, Spearman, time-lagged, and rolling methods to understand how sentiment relates to price action.",
   },
   {
     icon: MessageSquare,
-    title: 'AI-Powered Chat',
+    title: "AI-powered chat",
     description:
-      'Ask questions about any stock, market trend, or sentiment pattern. Our Groq-powered RAG chatbot has full context of all collected news, sentiment data, and social media buzz to provide deep insights.',
+      "Ask questions about any ticker, sector, or trend. The Groq-powered RAG assistant has full context of all collected news, sentiment, and social buzz and always cites its sources.",
   },
   {
     icon: Brain,
-    title: 'Model Fine-Tuning',
+    title: "Model fine-tuning",
     description:
-      'Train and customize the FinBERT sentiment model on specialized financial datasets using your GPU. Compare model performance and switch between base and fine-tuned models for improved accuracy.',
+      "Train the FinBERT sentiment model on specialized financial datasets using your GPU. Compare performance and switch between base and fine-tuned models at runtime.",
   },
 ];
 
@@ -58,74 +62,83 @@ export default function OnboardingPage() {
   const Icon = step.icon;
 
   return (
-    <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4">
-      <div className="max-w-2xl w-full">
-        {/* Progress dots */}
-        <div className="flex justify-center gap-2 mb-8">
+    <div className="flex min-h-screen items-center justify-center bg-background p-4">
+      <div className="w-full max-w-2xl">
+        <div className="mb-8 flex justify-center gap-2">
           {steps.map((_, i) => (
             <button
               key={i}
               onClick={() => setCurrentStep(i)}
-              className={`w-3 h-3 rounded-full transition-colors ${
-                i === currentStep ? 'bg-blue-500' : i < currentStep ? 'bg-blue-800' : 'bg-gray-700'
-              }`}
+              aria-label={`Step ${i + 1}`}
+              aria-current={i === currentStep ? "step" : undefined}
+              className={cn(
+                "h-2 rounded-full transition-all",
+                i === currentStep
+                  ? "w-6 bg-primary"
+                  : i < currentStep
+                    ? "w-2 bg-primary/50"
+                    : "w-2 bg-muted",
+              )}
             />
           ))}
         </div>
 
-        {/* Card */}
-        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-8 shadow-2xl">
-          <div className="flex justify-center mb-6">
-            <div className="w-16 h-16 bg-blue-500/10 rounded-2xl flex items-center justify-center">
-              <Icon className="w-8 h-8 text-blue-400" />
+        <Card>
+          <CardContent className="p-8">
+            <div className="mb-6 flex justify-center">
+              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
+                <Icon className="h-8 w-8 text-primary" aria-hidden="true" />
+              </div>
             </div>
-          </div>
 
-          <h1 className="text-2xl font-bold text-white text-center mb-4">{step.title}</h1>
-          <p className="text-gray-300 text-center leading-relaxed mb-6">{step.description}</p>
+            <h1 className="mb-3 text-center text-2xl font-semibold tracking-tight text-foreground">
+              {step.title}
+            </h1>
+            <p className="mb-6 text-center leading-relaxed text-muted-foreground">
+              {step.description}
+            </p>
 
-          {step.note && (
-            <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-4 flex gap-3 mb-6">
-              <AlertTriangle className="w-5 h-5 text-yellow-400 flex-shrink-0 mt-0.5" />
-              <p className="text-yellow-200 text-sm">{step.note}</p>
-            </div>
-          )}
-
-          <div className="flex justify-between items-center mt-8">
-            <button
-              onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
-              className={`text-gray-400 hover:text-white transition-colors ${
-                currentStep === 0 ? 'invisible' : ''
-              }`}
-            >
-              Back
-            </button>
-
-            {currentStep < steps.length - 1 ? (
-              <button
-                onClick={() => setCurrentStep(currentStep + 1)}
-                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-lg transition-colors"
-              >
-                Next
-                <ArrowRight className="w-4 h-4" />
-              </button>
-            ) : (
-              <button
-                onClick={() => navigate('/')}
-                className="flex items-center gap-2 bg-green-600 hover:bg-green-500 text-white px-6 py-2.5 rounded-lg transition-colors"
-              >
-                Get Started
-                <ArrowRight className="w-4 h-4" />
-              </button>
+            {step.note && (
+              <Alert className="mb-6 border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertDescription>{step.note}</AlertDescription>
+              </Alert>
             )}
-          </div>
-        </div>
 
-        {/* Skip */}
-        <div className="text-center mt-4">
+            <div className="mt-4 flex items-center justify-between">
+              <Button
+                variant="ghost"
+                onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
+                className={cn(currentStep === 0 && "invisible")}
+              >
+                Back
+              </Button>
+
+              {currentStep < steps.length - 1 ? (
+                <Button
+                  onClick={() => setCurrentStep(currentStep + 1)}
+                  className="gap-2"
+                >
+                  Next
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
+              ) : (
+                <Button
+                  onClick={() => navigate("/")}
+                  className="gap-2 bg-positive text-white hover:bg-positive/90"
+                >
+                  Get started
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="mt-4 text-center">
           <button
-            onClick={() => navigate('/')}
-            className="text-gray-500 hover:text-gray-300 text-sm transition-colors"
+            onClick={() => navigate("/")}
+            className="text-sm text-muted-foreground transition-colors hover:text-foreground"
           >
             Skip onboarding
           </button>

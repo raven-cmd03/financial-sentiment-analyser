@@ -1,78 +1,91 @@
+import { Cpu } from "lucide-react";
 import type { ModelInfo } from "@/types";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import EmptyState from "@/components/common/EmptyState";
 
 interface ModelComparisonProps {
   models: ModelInfo[];
 }
 
 export default function ModelComparison({ models }: ModelComparisonProps) {
-  if (models.length === 0) {
-    return (
-      <div className="text-center text-sm text-gray-500 py-8">
-        No models available for comparison.
-      </div>
-    );
-  }
-
   return (
-    <div className="overflow-x-auto rounded-lg border border-gray-700">
-      <table className="w-full text-left text-sm">
-        <thead>
-          <tr className="border-b border-gray-700 bg-gray-800/50">
-            <th className="px-4 py-3 text-xs font-medium text-gray-400">
-              Model
-            </th>
-            <th className="px-4 py-3 text-xs font-medium text-gray-400">
-              Base
-            </th>
-            <th className="px-4 py-3 text-xs font-medium text-gray-400 text-right">
-              Accuracy
-            </th>
-            <th className="px-4 py-3 text-xs font-medium text-gray-400 text-right">
-              F1 Score
-            </th>
-            <th className="px-4 py-3 text-xs font-medium text-gray-400 text-center">
-              Status
-            </th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-700/50">
-          {models.map((m) => (
-            <tr
-              key={m.id}
-              className={`transition-colors hover:bg-gray-800/50 ${
-                m.is_active ? "bg-blue-500/5" : ""
-              }`}
-            >
-              <td className="px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium text-gray-200">{m.name}</span>
-                  {m.is_active && (
-                    <span className="rounded-full bg-blue-500/20 px-2 py-0.5 text-[10px] font-semibold text-blue-400">
-                      ACTIVE
-                    </span>
-                  )}
-                </div>
-              </td>
-              <td className="px-4 py-3 text-gray-400">{m.base_model}</td>
-              <td className="px-4 py-3 text-right text-gray-200">
-                {m.accuracy !== undefined
-                  ? `${(m.accuracy * 100).toFixed(1)}%`
-                  : "—"}
-              </td>
-              <td className="px-4 py-3 text-right text-gray-200">
-                {m.f1_score !== undefined ? m.f1_score.toFixed(3) : "—"}
-              </td>
-              <td className="px-4 py-3 text-center">
-                <span
-                  className={`inline-block h-2 w-2 rounded-full ${
-                    m.is_active ? "bg-emerald-400" : "bg-gray-600"
-                  }`}
-                />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <Card>
+      <CardHeader className="flex-row items-center gap-2 space-y-0 pb-3">
+        <Cpu className="h-4 w-4 text-primary" />
+        <CardTitle className="text-sm">Available models</CardTitle>
+      </CardHeader>
+      <CardContent className="px-0 pb-0">
+        {models.length === 0 ? (
+          <div className="px-6 pb-6">
+            <EmptyState
+              icon={Cpu}
+              title="No models available"
+              description="Fine-tune a model to see it here."
+            />
+          </div>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Model</TableHead>
+                <TableHead>Source</TableHead>
+                <TableHead className="text-right">Accuracy</TableHead>
+                <TableHead className="text-center">Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {models.map((m) => (
+                <TableRow
+                  key={m.id}
+                  className={m.is_active ? "bg-primary/5" : undefined}
+                >
+                  <TableCell className="font-medium text-foreground">
+                    <div className="flex items-center gap-2">
+                      <span>{m.name}</span>
+                      {m.is_active && (
+                        <Badge className="bg-primary/15 text-primary hover:bg-primary/15">
+                          Active
+                        </Badge>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell className="capitalize text-muted-foreground">
+                    {m.source}
+                  </TableCell>
+                  <TableCell className="text-right font-mono text-sm">
+                    {m.accuracy != null
+                      ? `${(m.accuracy * 100).toFixed(1)}%`
+                      : "—"}
+                  </TableCell>
+                  <TableCell className="text-center">
+                    <span
+                      className={
+                        "inline-block h-2 w-2 rounded-full " +
+                        (m.is_active ? "bg-positive" : "bg-muted-foreground/40")
+                      }
+                      aria-label={m.is_active ? "Active" : "Idle"}
+                    />
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+    </Card>
   );
 }

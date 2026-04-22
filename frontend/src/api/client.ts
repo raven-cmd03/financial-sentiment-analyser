@@ -1,4 +1,5 @@
 import axios, { AxiosError } from "axios";
+import { toast } from "sonner";
 import type {
   Company,
   NewsArticle,
@@ -11,6 +12,7 @@ import type {
   DatasetInfo,
   FinetuningJob,
   ModelInfo,
+  MarketDataResponse,
 } from "@/types";
 
 const API_KEY = (import.meta.env.VITE_API_KEY as string | undefined) ?? "";
@@ -29,17 +31,69 @@ export function getApiKey(): string {
   return API_KEY;
 }
 
+/**
+ * Thrown when the backend returns 401/403 on a sensitive endpoint — i.e.
+ * the server is running but `API_KEY` is empty or wrong. The UI catches
+ * this specifically to show a gated-state banner instead of a red error.
+ */
+export class ApiLockedError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiLockedError";
+    this.status = status;
+  }
+}
+
+interface ApiErrorPayload {
+  detail?: string;
+}
+
+// Endpoints where a generic error toast would be spammy (the UI already
+// surfaces these errors inline on the affected widgets).
+const SILENT_ERROR_PATHS = ["/social/"];
+
+function shouldBeSilent(url: string | undefined): boolean {
+  if (!url) return false;
+  return SILENT_ERROR_PATHS.some((p) => url.includes(p));
+}
+
 api.interceptors.response.use(
   (response) => response,
-  (error: AxiosError<{ detail?: string }>) => {
+  (error: AxiosError<ApiErrorPayload>) => {
+    const status = error.response?.status ?? 0;
+    const detail = error.response?.data?.detail;
     const message =
-      error.response?.data?.detail ||
-      error.message ||
-      "An unexpected error occurred";
-    console.error(`[API Error] ${error.config?.method?.toUpperCase()} ${error.config?.url}: ${message}`);
+      detail || error.message || "An unexpected error occurred";
+    const url = error.config?.url;
+    const method = error.config?.method?.toUpperCase();
+
+    console.error(`[API Error] ${method} ${url}: ${status} ${message}`);
+
+    // 401/403 = missing/invalid key. 503 with the "API_KEY is not configured"
+    // detail is the backend's way of saying the gate is off entirely — same UX.
+    const isKeyMissing503 =
+      status === 503 && /api_key is not configured/i.test(message);
+
+    if (status === 401 || status === 403 || isKeyMissing503) {
+      return Promise.reject(new ApiLockedError(status, message));
+    }
+
+    // Only show toasts for actual server errors — the UI already handles
+    // 404s inline (empty states) and 4xx coverage is noisy.
+    if (status >= 500 && !shouldBeSilent(url)) {
+      toast.error("Service error", {
+        description: message,
+      });
+    }
+
     return Promise.reject(new Error(message));
   },
 );
+
+export function isLockedError(err: unknown): err is ApiLockedError {
+  return err instanceof ApiLockedError;
+}
 
 // ── Companies ──────────────────────────────────────────────
 
@@ -68,6 +122,17 @@ export async function getSentimentHistory(
 ): Promise<TrendData[]> {
   const { data } = await api.get<TrendData[]>(
     `/companies/${ticker}/sentiment/history`,
+    { params: { days } },
+  );
+  return data;
+}
+
+export async function getMarketData(
+  ticker: string,
+  days = 30,
+): Promise<MarketDataResponse> {
+  const { data } = await api.get<MarketDataResponse>(
+    `/companies/${ticker}/market`,
     { params: { days } },
   );
   return data;
@@ -136,7 +201,8 @@ export async function getSocialSentiment(
     const { data } = await api.get<SocialSentiment>(`/social/${ticker}`);
     return data;
   } catch (err) {
-    // Backend returns 404 when a ticker has no social sentiment rows yet — treat as empty.
+    if (isLockedError(err)) throw err;
+    // Backend returns 404 when a ticker has no social sentiment rows yet.
     if ((err as Error).message?.includes("No social sentiment")) return null;
     throw err;
   }
@@ -198,9 +264,11 @@ export async function getDatasets(): Promise<DatasetInfo[]> {
 export async function uploadDataset(file: File): Promise<DatasetInfo> {
   const formData = new FormData();
   formData.append("file", file);
-  const { data } = await api.post<DatasetInfo>("/finetuning/datasets/upload", formData, {
-    headers: { "Content-Type": "multipart/form-data" },
-  });
+  const { data } = await api.post<DatasetInfo>(
+    "/finetuning/datasets/upload",
+    formData,
+    { headers: { "Content-Type": "multipart/form-data" } },
+  );
   return data;
 }
 
@@ -212,10 +280,7 @@ interface FinetuningParams {
 export async function startFinetuning(
   params: FinetuningParams,
 ): Promise<FinetuningJob> {
-  const { data } = await api.post<FinetuningJob>(
-    "/finetuning/jobs",
-    params,
-  );
+  const { data } = await api.post<FinetuningJob>("/finetuning/jobs", params);
   return data;
 }
 
@@ -235,6 +300,8 @@ export async function getModels(): Promise<ModelInfo[]> {
 }
 
 export async function activateModel(id: string): Promise<ModelInfo> {
-  const { data } = await api.post<ModelInfo>(`/finetuning/models/${id}/activate`);
+  const { data } = await api.post<ModelInfo>(
+    `/finetuning/models/${id}/activate`,
+  );
   return data;
 }

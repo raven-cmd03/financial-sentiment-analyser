@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func, cast, Date
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.models import Company, NewsArticle, SentimentResult, ArticleCompany, SocialSentiment
 from app.schemas.schemas import CompanyOut, CompanySentimentOut, NewsArticleOut, SocialSentimentOut
+from app.services.market_data import MarketDataService
 
 router = APIRouter()
 
@@ -165,3 +166,34 @@ async def get_sentiment_history(
         }
         for row in rows
     ]
+
+
+@router.get("/{ticker}/market")
+async def get_company_market_data(
+    ticker: str,
+    days: int = Query(30, ge=1, le=365),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return recent daily OHLCV for a ticker.
+
+    Data is upserted by the ``collect_market_data_task`` worker (Alpha Vantage
+    primary, yfinance fallback). The endpoint always returns the rows already
+    persisted — it never blocks on an external fetch — so the UI is resilient
+    to quota-throttled upstream APIs.
+    """
+    ticker = ticker.upper()
+    result = await db.execute(
+        select(Company).where(Company.ticker_symbol == ticker)
+    )
+    company = result.scalar_one_or_none()
+    if not company:
+        raise HTTPException(
+            status_code=404, detail=f"Company with ticker '{ticker}' not found"
+        )
+
+    service = MarketDataService()
+    # Cap by number of rows the client asked for; stored rows are already
+    # indexed by date DESC in the service layer.
+    rows = await service.get_latest_prices(ticker, db, limit=days)
+    rows.sort(key=lambda r: r["date"])
+    return {"ticker": ticker, "rows": rows}

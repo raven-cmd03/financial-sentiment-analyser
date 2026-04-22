@@ -1,19 +1,29 @@
 import { useState, useRef, useEffect } from "react";
-import { Send } from "lucide-react";
+import { ArrowUp, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 
 interface ChatInputProps {
   onSend: (message: string) => void;
   disabled?: boolean;
+  streaming?: boolean;
 }
 
-export default function ChatInput({ onSend, disabled }: ChatInputProps) {
+export default function ChatInput({
+  onSend,
+  disabled,
+  streaming,
+}: ChatInputProps) {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
-      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 150)}px`;
+      textareaRef.current.style.height = `${Math.min(
+        textareaRef.current.scrollHeight,
+        200,
+      )}px`;
     }
   }, [value]);
 
@@ -31,9 +41,11 @@ export default function ChatInput({ onSend, disabled }: ChatInputProps) {
     }
   };
 
+  const canSend = value.trim().length > 0 && !disabled;
+
   return (
-    <div className="flex items-end gap-2 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-2 transition-colors focus-within:border-[var(--color-accent)]/30">
-      <textarea
+    <div className="relative flex items-end gap-2 rounded-2xl border border-border bg-card p-2 shadow-sm transition-all focus-within:border-primary/50 focus-within:shadow-md focus-within:ring-2 focus-within:ring-primary/10">
+      <Textarea
         ref={textareaRef}
         value={value}
         onChange={(e) => setValue(e.target.value)}
@@ -41,15 +53,21 @@ export default function ChatInput({ onSend, disabled }: ChatInputProps) {
         placeholder="Ask about financial sentiment…"
         disabled={disabled}
         rows={1}
-        className="max-h-[150px] min-h-[36px] flex-1 resize-none bg-transparent px-2 py-1.5 text-[13px] text-[var(--color-text-primary)] placeholder-[var(--color-text-muted)] outline-none disabled:opacity-50"
+        className="min-h-[40px] resize-none border-0 bg-transparent px-2 py-2 text-sm shadow-none placeholder:text-muted-foreground focus-visible:ring-0"
       />
-      <button
+      <Button
         onClick={handleSubmit}
-        disabled={disabled || !value.trim()}
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-accent)] text-white transition-all hover:bg-[var(--color-accent-hover)] disabled:opacity-30 disabled:hover:bg-[var(--color-accent)]"
+        disabled={!canSend}
+        size="icon"
+        className="h-9 w-9 shrink-0 rounded-xl"
+        aria-label={streaming ? "Streaming response" : "Send message"}
       >
-        <Send className="h-3.5 w-3.5" />
-      </button>
+        {streaming ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <ArrowUp className="h-4 w-4" />
+        )}
+      </Button>
     </div>
   );
 }

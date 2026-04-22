@@ -1,7 +1,8 @@
 import { useRef, useEffect } from "react";
-import { Sparkles } from "lucide-react";
+import { Sparkles, TrendingUp, BarChart3, Search, Info } from "lucide-react";
 import MessageBubble from "./MessageBubble";
 import type { Citation } from "./CitationCard";
+import { Button } from "@/components/ui/button";
 
 interface DisplayMessage {
   id: string | number;
@@ -16,10 +17,17 @@ interface ChatWindowProps {
   onSuggestionClick?: (text: string) => void;
 }
 
-const SUGGESTIONS = [
-  "What's the current sentiment on AAPL?",
-  "Which stocks have the most positive buzz on X?",
-  "How does news sentiment correlate with price movement?",
+const SUGGESTIONS: Array<{
+  icon: typeof Sparkles;
+  text: string;
+}> = [
+  { icon: Search, text: "What's the current sentiment on AAPL?" },
+  { icon: TrendingUp, text: "Which stocks have the most positive buzz on X?" },
+  {
+    icon: BarChart3,
+    text: "How does news sentiment correlate with price movement?",
+  },
+  { icon: Info, text: "Summarise yesterday's top negative news across tech." },
 ];
 
 export default function ChatWindow({
@@ -34,36 +42,53 @@ export default function ChatWindow({
 
   if (messages.length === 0) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-6 px-4">
-        <div className="flex flex-col items-center gap-3 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--color-accent)]/10">
-            <Sparkles className="h-6 w-6 text-[var(--color-accent)]" />
-          </div>
-          <h2 className="text-base font-semibold text-[var(--color-text-primary)]">
-            Financial Sentiment Assistant
-          </h2>
-          <p className="max-w-md text-[13px] text-[var(--color-text-muted)]">
-            Ask questions about market sentiment, social buzz, or news analysis.
-          </p>
-        </div>
-        <div className="flex flex-wrap justify-center gap-2">
-          {SUGGESTIONS.map((q) => (
-            <button
-              key={q}
-              onClick={() => onSuggestionClick?.(q)}
-              className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3.5 py-2 text-[12px] text-[var(--color-text-secondary)] transition-all hover:border-[var(--color-accent)]/30 hover:text-[var(--color-accent)]"
+      <div className="flex flex-1 items-center justify-center overflow-y-auto px-4 py-10">
+        <div className="flex w-full max-w-2xl flex-col items-center gap-8 text-center">
+          <div className="flex flex-col items-center gap-4">
+            <div
+              className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary ring-1 ring-primary/20"
+              aria-hidden="true"
             >
-              {q}
-            </button>
-          ))}
+              <Sparkles className="h-6 w-6" />
+            </div>
+            <div className="space-y-1.5">
+              <h2 className="text-2xl font-semibold tracking-tight">
+                Financial sentiment assistant
+              </h2>
+              <p className="mx-auto max-w-md text-sm text-muted-foreground">
+                Grounded in every article and social post we've collected. Ask
+                about tickers, sectors, or correlations — responses cite their
+                sources.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2">
+            {SUGGESTIONS.map(({ icon: Icon, text }) => (
+              <Button
+                key={text}
+                variant="outline"
+                className="group h-auto items-start justify-start gap-3 whitespace-normal px-4 py-3 text-left"
+                onClick={() => onSuggestionClick?.(text)}
+              >
+                <Icon
+                  className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-primary"
+                  aria-hidden="true"
+                />
+                <span className="text-sm font-normal text-foreground">
+                  {text}
+                </span>
+              </Button>
+            ))}
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex-1 overflow-y-auto px-4 py-6">
-      <div className="mx-auto max-w-3xl space-y-5">
+    <div className="flex-1 overflow-y-auto">
+      <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6">
         {messages.map((m) => (
           <MessageBubble
             key={m.id}

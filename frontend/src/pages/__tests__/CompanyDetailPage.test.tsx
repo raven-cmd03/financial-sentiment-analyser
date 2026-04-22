@@ -21,6 +21,9 @@ vi.mock("@/api/client", () => ({
 vi.mock("@/components/SentimentChart/SentimentChart", () => ({
   default: () => <div data-testid="sentiment-chart" />,
 }));
+vi.mock("@/components/PriceChart/PriceChart", () => ({
+  default: () => <div data-testid="price-chart" />,
+}));
 vi.mock("@/components/CorrelationTable/CorrelationTable", () => ({
   default: () => <div data-testid="correlation-table" />,
 }));

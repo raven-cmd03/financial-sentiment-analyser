@@ -1,34 +1,30 @@
 import { AlertTriangle } from "lucide-react";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 
 interface ErrorMessageProps {
   message: string;
   onRetry?: () => void;
+  title?: string;
 }
 
-export default function ErrorMessage({ message, onRetry }: ErrorMessageProps) {
+export default function ErrorMessage({
+  message,
+  onRetry,
+  title = "Something went wrong",
+}: ErrorMessageProps) {
   return (
-    <div
-      role="alert"
-      aria-live="assertive"
-      className="flex items-start gap-3 rounded-[var(--radius-md)] border border-[var(--color-negative)]/20 bg-[var(--color-negative)]/5 px-4 py-3"
-    >
-      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-negative)]" />
-      <div className="flex-1">
-        <p className="text-[13px] font-medium text-[var(--color-negative)]">
-          Something went wrong
-        </p>
-        <p className="mt-0.5 text-[12px] text-[var(--color-text-secondary)]">
-          {message}
-        </p>
+    <Alert variant="destructive" role="alert">
+      <AlertTriangle className="h-4 w-4" />
+      <AlertTitle>{title}</AlertTitle>
+      <AlertDescription className="space-y-2">
+        <p className="text-sm">{message}</p>
         {onRetry && (
-          <button
-            onClick={onRetry}
-            className="mt-2 text-[12px] font-medium text-[var(--color-accent)] transition-colors hover:text-[var(--color-accent-hover)]"
-          >
+          <Button size="sm" variant="outline" onClick={onRetry}>
             Try again
-          </button>
+          </Button>
         )}
-      </div>
-    </div>
+      </AlertDescription>
+    </Alert>
   );
 }

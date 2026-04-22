@@ -1,8 +1,26 @@
 import { useMemo } from "react";
+import { Activity } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { getCorrelations } from "@/api/client";
 import LoadingSpinner from "@/components/common/LoadingSpinner";
 import ErrorMessage from "@/components/common/ErrorMessage";
+import EmptyState from "@/components/common/EmptyState";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 import type { CorrelationData } from "@/types";
 
 interface CorrelationTableProps {
@@ -10,9 +28,9 @@ interface CorrelationTableProps {
 }
 
 function colorForValue(v: number): string {
-  if (v > 0.3) return "text-[var(--color-positive)]";
-  if (v < -0.3) return "text-[var(--color-negative)]";
-  return "text-[var(--color-text-secondary)]";
+  if (v > 0.3) return "text-positive";
+  if (v < -0.3) return "text-negative";
+  return "text-muted-foreground";
 }
 
 function humanizeType(type: string, timeLag: number | null | undefined): string {
@@ -56,9 +74,15 @@ export default function CorrelationTable({ ticker }: CorrelationTableProps) {
 
   if (rows.length === 0) {
     return (
-      <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-6 text-center text-[12px] text-[var(--color-text-muted)]">
-        No correlation data for {ticker.toUpperCase()} yet.
-      </div>
+      <Card>
+        <CardContent className="p-6">
+          <EmptyState
+            icon={Activity}
+            title="No correlation data yet"
+            description={`Correlation jobs run nightly. Come back after the next run for ${ticker.toUpperCase()}.`}
+          />
+        </CardContent>
+      </Card>
     );
   }
 
@@ -67,54 +91,55 @@ export default function CorrelationTable({ ticker }: CorrelationTableProps) {
     : "—";
 
   return (
-    <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
-      <div className="border-b border-[var(--color-border)] px-4 py-3">
-        <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
+    <Card>
+      <CardHeader>
+        <CardTitle>
           Sentiment–Price Correlation — {ticker.toUpperCase()}
-        </h3>
-        <p className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
+        </CardTitle>
+        <CardDescription>
           Most recent calculation: {latestDate}
-        </p>
-      </div>
-
-      <div className="overflow-x-auto">
-        <table className="w-full text-[13px]">
-          <thead>
-            <tr className="border-b border-[var(--color-border)] text-left text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
-              <th className="px-4 py-2 font-semibold">Metric</th>
-              <th className="px-4 py-2 text-right font-semibold">Value</th>
-              <th className="px-4 py-2 text-right font-semibold">p-value</th>
-              <th className="hidden px-4 py-2 text-right font-semibold sm:table-cell">
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Metric</TableHead>
+              <TableHead className="text-right">Value</TableHead>
+              <TableHead className="text-right">p-value</TableHead>
+              <TableHead className="hidden text-right sm:table-cell">
                 Samples
-              </th>
-            </tr>
-          </thead>
-          <tbody>
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {rows.map((row) => (
-              <tr
+              <TableRow
                 key={`${row.correlation_type}-${row.time_lag ?? "none"}-${row.correlation_id}`}
-                className="border-b border-[var(--color-border-subtle)] last:border-0 transition-colors hover:bg-[var(--color-bg-tertiary)]/30"
               >
-                <td className="px-4 py-2.5 font-medium text-[var(--color-text-primary)]">
+                <TableCell className="font-medium">
                   {humanizeType(row.correlation_type, row.time_lag)}
-                </td>
-                <td
-                  className={`px-4 py-2.5 text-right font-mono ${colorForValue(row.correlation_value)}`}
+                </TableCell>
+                <TableCell
+                  className={cn(
+                    "text-right font-mono",
+                    colorForValue(row.correlation_value),
+                  )}
                 >
                   {row.correlation_value > 0 ? "+" : ""}
                   {row.correlation_value.toFixed(4)}
-                </td>
-                <td className="px-4 py-2.5 text-right font-mono text-[var(--color-text-muted)]">
+                </TableCell>
+                <TableCell className="text-right font-mono text-muted-foreground">
                   {row.p_value != null ? row.p_value.toExponential(2) : "—"}
-                </td>
-                <td className="hidden px-4 py-2.5 text-right font-mono text-[var(--color-text-muted)] sm:table-cell">
+                </TableCell>
+                <TableCell className="hidden text-right font-mono text-muted-foreground sm:table-cell">
                   {row.sample_size ?? "—"}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
   );
 }

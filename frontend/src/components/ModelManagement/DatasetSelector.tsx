@@ -1,7 +1,20 @@
 import { useState } from "react";
-import { Upload, Database } from "lucide-react";
+import { Upload, Database, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { useApi } from "@/hooks/useApi";
 import { getDatasets, uploadDataset } from "@/api/client";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  RadioGroup,
+  RadioGroupItem,
+} from "@/components/ui/radio-group";
+import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 
 interface DatasetSelectorProps {
   value: string | null;
@@ -42,8 +55,13 @@ export default function DatasetSelector({
       const ds = await uploadDataset(file);
       refetch();
       onChange(ds.name);
+      toast.success("Dataset uploaded", {
+        description: `${ds.name} · ${ds.sample_count.toLocaleString()} samples`,
+      });
     } catch (err) {
-      console.error("Upload failed:", err);
+      toast.error("Upload failed", {
+        description: (err as Error).message,
+      });
     } finally {
       setUploading(false);
       e.target.value = "";
@@ -51,78 +69,70 @@ export default function DatasetSelector({
   };
 
   return (
-    <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
-      <label className="mb-3 flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-primary)]">
-        <Database className="h-3.5 w-3.5 text-[var(--color-accent)]" />
-        Training Dataset
-      </label>
+    <Card>
+      <CardHeader className="flex-row items-center gap-2 space-y-0 pb-3">
+        <Database className="h-4 w-4 text-primary" />
+        <CardTitle className="text-sm">Training dataset</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <RadioGroup
+          value={value ?? ""}
+          onValueChange={(v) => onChange(v)}
+          className="gap-2"
+        >
+          {BUILTIN_DATASETS.map((ds) => (
+            <Label
+              key={ds.key}
+              htmlFor={`ds-${ds.key}`}
+              className={cn(
+                "flex cursor-pointer items-start gap-3 rounded-md border p-3 font-normal transition-colors",
+                value === ds.key
+                  ? "border-primary/60 bg-primary/5"
+                  : "border-border hover:border-border hover:bg-accent/40",
+              )}
+            >
+              <RadioGroupItem id={`ds-${ds.key}`} value={ds.key} className="mt-0.5" />
+              <div>
+                <p className="text-sm font-medium text-foreground">{ds.label}</p>
+                <p className="text-xs text-muted-foreground">{ds.description}</p>
+              </div>
+            </Label>
+          ))}
 
-      <div className="space-y-2">
-        {BUILTIN_DATASETS.map((ds) => (
-          <label
-            key={ds.key}
-            className={`flex cursor-pointer items-start gap-3 rounded-[var(--radius-md)] border p-3 transition-all duration-150 ${
-              value === ds.key
-                ? "border-[var(--color-accent)]/40 bg-[var(--color-accent)]/8"
-                : "border-[var(--color-border)] hover:border-[var(--color-border)]/80 hover:bg-[var(--color-bg-tertiary)]/30"
-            }`}
-          >
-            <input
-              type="radio"
-              name="dataset"
-              value={ds.key}
-              checked={value === ds.key}
-              onChange={() => onChange(ds.key)}
-              className="mt-0.5 accent-[var(--color-accent)]"
-            />
-            <div>
-              <p className="text-[13px] font-medium text-[var(--color-text-primary)]">
-                {ds.label}
-              </p>
-              <p className="text-[11px] text-[var(--color-text-muted)]">
-                {ds.description}
-              </p>
-            </div>
-          </label>
-        ))}
-
-        {(customDatasets ?? []).map((ds) => (
-          <label
-            key={ds.name}
-            className={`flex cursor-pointer items-start gap-3 rounded-[var(--radius-md)] border p-3 transition-all duration-150 ${
-              value === ds.name
-                ? "border-[var(--color-accent)]/40 bg-[var(--color-accent)]/8"
-                : "border-[var(--color-border)] hover:border-[var(--color-border)]/80 hover:bg-[var(--color-bg-tertiary)]/30"
-            }`}
-          >
-            <input
-              type="radio"
-              name="dataset"
-              value={ds.name}
-              checked={value === ds.name}
-              onChange={() => onChange(ds.name)}
-              className="mt-0.5 accent-[var(--color-accent)]"
-            />
-            <div>
-              <p className="text-[13px] font-medium text-[var(--color-text-primary)]">
-                {ds.name}
-              </p>
-              <p className="text-[11px] text-[var(--color-text-muted)]">
-                {ds.description}
-              </p>
-            </div>
-          </label>
-        ))}
+          {(customDatasets ?? []).map((ds) => (
+            <Label
+              key={ds.name}
+              htmlFor={`ds-${ds.name}`}
+              className={cn(
+                "flex cursor-pointer items-start gap-3 rounded-md border p-3 font-normal transition-colors",
+                value === ds.name
+                  ? "border-primary/60 bg-primary/5"
+                  : "border-border hover:border-border hover:bg-accent/40",
+              )}
+            >
+              <RadioGroupItem id={`ds-${ds.name}`} value={ds.name} className="mt-0.5" />
+              <div>
+                <p className="text-sm font-medium text-foreground">{ds.name}</p>
+                <p className="text-xs text-muted-foreground">{ds.description}</p>
+              </div>
+            </Label>
+          ))}
+        </RadioGroup>
 
         <label
-          className={`flex cursor-pointer items-center gap-3 rounded-[var(--radius-md)] border border-dashed p-3 transition-all duration-150 ${
+          className={cn(
+            "flex cursor-pointer items-center gap-3 rounded-md border border-dashed p-3 transition-colors",
             uploading
-              ? "border-[var(--color-accent)]/40 bg-[var(--color-accent)]/8"
-              : "border-[var(--color-border)] hover:border-[var(--color-accent)]/30"
-          }`}
+              ? "border-primary/60 bg-primary/5"
+              : "border-border hover:border-primary/50",
+          )}
         >
-          <Upload className="h-3.5 w-3.5 text-[var(--color-text-muted)]" />
-          <span className="text-[12px] text-[var(--color-text-muted)]">
+          {uploading ? (
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+          ) : (
+            <Upload className="h-4 w-4 text-muted-foreground" />
+          )}
+          <span className="text-xs text-muted-foreground">
             {uploading ? "Uploading…" : "Upload custom dataset (.csv)"}
           </span>
           <input
@@ -133,7 +143,7 @@ export default function DatasetSelector({
             className="hidden"
           />
         </label>
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }

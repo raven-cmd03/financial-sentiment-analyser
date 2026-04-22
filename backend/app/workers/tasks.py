@@ -14,9 +14,17 @@ def _hash_url(url: str) -> str:
 
 
 async def _fetch_news_for_ticker(ticker: str, company_name: str) -> list[dict]:
-    """Fetch articles from all async clients for a single ticker."""
-    from app.clients import GoogleNewsClient, YahooFinanceClient
+    """Fetch articles from every configured news source for a single ticker.
 
+    The returned list is deduped by URL. Each client is isolated in its own
+    try/except so a failure in one source can never kill the others — that's
+    how the proposal's "handle API failures gracefully" requirement (NFR-05)
+    is actually enforced in practice.
+    """
+    from app.clients import AlphaVantageClient, GoogleNewsClient, YahooFinanceClient
+    from app.config import get_settings
+
+    settings = get_settings()
     articles: list[dict] = []
 
     async with GoogleNewsClient() as gn:
@@ -32,6 +40,16 @@ async def _fetch_news_for_ticker(ticker: str, company_name: str) -> list[dict]:
             articles.extend(results)
         except Exception as exc:
             logger.warning("YahooFinance failed for %s: %s", ticker, exc)
+
+    if settings.ALPHA_VANTAGE_API_KEY:
+        async with AlphaVantageClient(api_key=settings.ALPHA_VANTAGE_API_KEY) as av:
+            try:
+                results = await av.fetch_news(
+                    ticker, max_results=settings.ALPHA_VANTAGE_NEWS_LIMIT
+                )
+                articles.extend(results)
+            except Exception as exc:
+                logger.warning("AlphaVantage news failed for %s: %s", ticker, exc)
 
     seen: set[str] = set()
     unique: list[dict] = []
@@ -130,6 +148,10 @@ def collect_news_task(self):
         if new_article_ids:
             analyze_sentiment_task.delay(new_article_ids)
             logger.info("Triggered sentiment analysis for %d articles", len(new_article_ids))
+
+        # Refresh market data so correlations have real prices to align against.
+        # We don't depend on its success — correlations degrade gracefully.
+        collect_market_data_task.delay()
 
         return {"articles_collected": total_new}
     except Exception as exc:
@@ -382,6 +404,155 @@ def index_vector_store_task(self):
         raise self.retry(exc=exc)
     finally:
         session.close()
+
+
+async def _collect_market_data_for_tickers(tickers: list[str]) -> dict[str, int]:
+    """Fetch daily OHLCV per ticker (Alpha Vantage primary, yfinance fallback)
+    and upsert it via MarketDataService. Returns a ``{ticker: rows_upserted}``
+    map. One bad ticker never stalls the others.
+    """
+    from app.clients import AlphaVantageClient, AlphaVantageError
+    from app.config import get_settings
+    from app.database import AsyncSessionLocal
+    from app.services.market_data import MarketDataService
+
+    settings = get_settings()
+    service = MarketDataService()
+    results: dict[str, int] = {}
+
+    av_client: AlphaVantageClient | None = None
+    if settings.ALPHA_VANTAGE_API_KEY:
+        av_client = AlphaVantageClient(api_key=settings.ALPHA_VANTAGE_API_KEY)
+
+    try:
+        async with AsyncSessionLocal() as db:
+            for ticker in tickers:
+                df = None
+                # 1. Preferred: Alpha Vantage TIME_SERIES_DAILY.
+                if av_client is not None:
+                    try:
+                        df = await av_client.fetch_daily_prices(ticker, outputsize="compact")
+                    except AlphaVantageError as exc:
+                        logger.warning("AlphaVantage prices unavailable for %s: %s", ticker, exc)
+                        df = None
+                    except Exception as exc:
+                        logger.warning("AlphaVantage prices failed for %s: %s", ticker, exc)
+                        df = None
+
+                # 2. Fallback: yfinance (also the only source when no AV key).
+                if df is None or df.empty:
+                    try:
+                        df = await asyncio.to_thread(
+                            service.fetch_stock_data, ticker, "3mo"
+                        )
+                    except Exception as exc:
+                        logger.error("Market data fallback failed for %s: %s", ticker, exc)
+                        results[ticker] = 0
+                        continue
+
+                if df is None or df.empty:
+                    results[ticker] = 0
+                    continue
+
+                try:
+                    upserted = await service.store_market_data(ticker, df, db)
+                    results[ticker] = upserted
+                except Exception as exc:
+                    logger.error("Market data upsert failed for %s: %s", ticker, exc)
+                    await db.rollback()
+                    results[ticker] = 0
+
+            await db.commit()
+    finally:
+        if av_client is not None:
+            await av_client.close()
+
+    return results
+
+
+@celery_app.task(bind=True, max_retries=2, default_retry_delay=300)
+def collect_market_data_task(self):
+    """Refresh daily OHLCV for every tracked ticker.
+
+    Runs on beat (daily after US market close) and is also chained off
+    ``collect_news_task`` so correlations always have fresh prices to align
+    against fresh sentiment.
+    """
+    from app.models import Company
+
+    logger.info("Starting market data collection")
+    session = SyncSessionLocal()
+    try:
+        tickers = [c.ticker_symbol for c in session.query(Company).all()]
+    finally:
+        session.close()
+
+    if not tickers:
+        logger.info("No tracked companies; skipping market data collection")
+        return {"tickers_updated": 0, "rows_upserted": 0}
+
+    try:
+        results = asyncio.run(_collect_market_data_for_tickers(tickers))
+        rows_total = sum(results.values())
+        updated = sum(1 for v in results.values() if v > 0)
+        logger.info(
+            "Market data collection complete: %d/%d tickers, %d rows",
+            updated,
+            len(tickers),
+            rows_total,
+        )
+        return {"tickers_updated": updated, "rows_upserted": rows_total}
+    except Exception as exc:
+        logger.exception("Market data collection failed")
+        raise self.retry(exc=exc)
+
+
+@celery_app.task(bind=True, max_retries=0)
+def backfill_historical_data_task(
+    self,
+    tickers: list[str] | None = None,
+    years_back: int = 5,
+    include_news: bool = True,
+    include_prices: bool = True,
+    news_window_days: int = 30,
+    max_news_requests: int | None = 200,
+    news_provider: str = "gdelt",
+):
+    """Long-running historical backfill task.
+
+    Not retried on failure (``max_retries=0``): a backfill run can take
+    minutes to hours and may legitimately be cancelled by the operator
+    — silently retrying would double-issue expensive AV calls. Re-run
+    manually if needed; the persistence paths are idempotent.
+    """
+    from app.services.backfill import run_backfill_sync
+
+    logger.info(
+        "Starting historical backfill task (tickers=%s, years=%d, provider=%s)",
+        tickers or "ALL",
+        years_back,
+        news_provider,
+    )
+    try:
+        summary = run_backfill_sync(
+            tickers=tickers,
+            years_back=years_back,
+            include_news=include_news,
+            include_prices=include_prices,
+            news_window_days=news_window_days,
+            max_news_requests=max_news_requests,
+            news_provider=news_provider,
+        )
+        logger.info(
+            "Backfill complete: %d tickers, %d new articles, %d price rows",
+            summary["tickers_processed"],
+            summary["total_news_new"],
+            summary["total_prices_upserted"],
+        )
+        return summary
+    except Exception:
+        logger.exception("Historical backfill task failed")
+        raise
 
 
 @celery_app.task(bind=True, max_retries=1, default_retry_delay=600)

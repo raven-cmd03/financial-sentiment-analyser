@@ -1,0 +1,12 @@
+# Shell scripts must stay LF-only so containers built on Linux from a Windows
+# checkout don't choke on \r. (The Dockerfile also strips CRLF at build time
+# as a belt-and-suspenders measure.)
+*.sh           text eol=lf
+docker-entrypoint.sh text eol=lf
+
+# Dockerfiles are executed by the daemon; keep them LF too.
+Dockerfile     text eol=lf
+*.dockerfile   text eol=lf
+
+# Leave everything else to Git's default normalization.
+* text=auto

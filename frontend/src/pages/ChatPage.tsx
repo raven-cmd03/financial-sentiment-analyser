@@ -1,6 +1,6 @@
-import { useState, useCallback, useEffect, useRef } from "react";
-import { MessageSquare } from "lucide-react";
-import Navbar from "@/components/common/Navbar";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { MessageSquare, AlertTriangle, Sparkles } from "lucide-react";
+import { toast } from "sonner";
 import {
   createChatSession,
   getChatSessions,
@@ -8,6 +8,7 @@ import {
   sendChatMessageUrl,
   deleteChatSession,
   getApiKey,
+  isLockedError,
 } from "@/api/client";
 import SessionList from "@/components/Chat/SessionList";
 import ChatWindow from "@/components/Chat/ChatWindow";
@@ -15,20 +16,31 @@ import ChatInput from "@/components/Chat/ChatInput";
 import type { DisplayMessage } from "@/components/Chat/ChatWindow";
 import type { ChatSession } from "@/types";
 import type { Citation } from "@/components/Chat/CitationCard";
+import LockedStateCard from "@/components/common/LockedStateCard";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 
 export default function ChatPage() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeId, setActiveId] = useState<string | number | null>(null);
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
+  const [locked, setLocked] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const loadSessions = useCallback(async () => {
     try {
       const data = await getChatSessions();
       setSessions(data);
-    } catch {
-      /* swallow */
+      setLocked(false);
+      setLoadError(null);
+    } catch (err) {
+      if (isLockedError(err)) {
+        setLocked(true);
+      } else {
+        setLoadError((err as Error).message);
+      }
     }
   }, []);
 
@@ -60,6 +72,7 @@ export default function ChatPage() {
       setActiveId(session.id);
       setMessages([]);
     } catch (err) {
+      if (isLockedError(err)) setLocked(true);
       console.error("Failed to create session:", err);
     }
   }, []);
@@ -90,7 +103,8 @@ export default function ChatPage() {
           setSessions((prev) => [session, ...prev]);
           sessionId = session.id;
           setActiveId(sessionId);
-        } catch {
+        } catch (err) {
+          if (isLockedError(err)) setLocked(true);
           return;
         }
       }
@@ -125,6 +139,19 @@ export default function ChatPage() {
           body: JSON.stringify({ content }),
           signal: controller.signal,
         });
+
+        if (response.status === 401 || response.status === 403) {
+          setLocked(true);
+          throw new Error("API key required");
+        }
+
+        if (response.status === 503) {
+          toast.error("Chat is temporarily unavailable", {
+            description:
+              "The Groq / LLM backend returned 503. Check provider status and try again.",
+          });
+          throw new Error("Service unavailable");
+        }
 
         if (!response.ok || !response.body) {
           throw new Error("Stream failed");
@@ -191,7 +218,8 @@ export default function ChatPage() {
               m.id === assistantMsg.id
                 ? {
                     ...m,
-                    content: "Sorry, an error occurred. Please try again.",
+                    content:
+                      "Sorry, an error occurred while streaming the response. Please try again.",
                     isStreaming: false,
                   }
                 : m,
@@ -213,17 +241,54 @@ export default function ChatPage() {
     [handleSend],
   );
 
+  const activeSession = useMemo(
+    () => sessions.find((s) => s.id === activeId) ?? null,
+    [sessions, activeId],
+  );
+
+  if (locked) {
+    return (
+      <div className="mx-auto w-full max-w-3xl px-4 py-10">
+        <LockedStateCard
+          title="Chat is locked"
+          description="The chat endpoints require the backend API_KEY. Set API_KEY on the backend service and VITE_API_KEY on the frontend, then reload."
+          onRetry={() => {
+            setLocked(false);
+            loadSessions();
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
-    <div className="flex h-screen flex-col bg-[var(--color-bg-primary)]">
-      <Navbar />
+    <div className="flex h-[calc(100vh-3.5rem)] flex-col bg-background">
+      {loadError && (
+        <div className="border-b border-border bg-background px-4 py-2">
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>Couldn't load chat sessions</AlertTitle>
+            <AlertDescription>{loadError}</AlertDescription>
+          </Alert>
+        </div>
+      )}
 
       <div className="flex flex-1 overflow-hidden">
-        <div className="flex w-[240px] shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
-          <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-3">
-            <MessageSquare className="h-4 w-4 text-[var(--color-accent)]" />
-            <h2 className="text-[12px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
-              Chats
-            </h2>
+        <aside
+          aria-label="Chat sessions"
+          className="hidden w-[260px] shrink-0 flex-col border-r border-border bg-card md:flex"
+        >
+          <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border px-4">
+            <MessageSquare
+              className="h-4 w-4 text-primary"
+              aria-hidden="true"
+            />
+            <h2 className="text-sm font-semibold text-foreground">Chats</h2>
+            {sessions.length > 0 && (
+              <span className="ml-auto rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                {sessions.length}
+              </span>
+            )}
           </div>
           <SessionList
             sessions={sessions}
@@ -232,16 +297,57 @@ export default function ChatPage() {
             onCreate={handleCreate}
             onDelete={handleDelete}
           />
-        </div>
+        </aside>
 
-        <div className="flex flex-1 flex-col">
+        <section
+          aria-label="Conversation"
+          className="flex min-w-0 flex-1 flex-col"
+        >
+          <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-background/80 px-5 backdrop-blur">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <Sparkles
+                className="h-4 w-4 shrink-0 text-primary"
+                aria-hidden="true"
+              />
+              <h1 className="truncate text-sm font-semibold text-foreground">
+                {activeSession?.title || "New conversation"}
+              </h1>
+            </div>
+            <Badge
+              variant="outline"
+              className="hidden gap-1.5 font-mono text-[10px] text-muted-foreground sm:inline-flex"
+            >
+              <span
+                className="h-1.5 w-1.5 rounded-full bg-positive"
+                aria-hidden="true"
+              />
+              Groq · Llama-3.3 70B
+            </Badge>
+          </header>
+
           <ChatWindow messages={messages} onSuggestionClick={handleSuggestion} />
-          <div className="border-t border-[var(--color-border)] bg-[var(--color-bg-primary)] px-4 py-3">
+
+          <div className="shrink-0 border-t border-border bg-background/80 px-4 py-3 backdrop-blur">
             <div className="mx-auto max-w-3xl">
-              <ChatInput onSend={handleSend} disabled={streaming} />
+              <ChatInput
+                onSend={handleSend}
+                disabled={streaming}
+                streaming={streaming}
+              />
+              <p className="mt-2 text-center text-[10px] text-muted-foreground">
+                Responses cite their sources. Press{" "}
+                <kbd className="rounded border border-border bg-muted px-1 py-0.5 font-mono">
+                  Enter
+                </kbd>{" "}
+                to send ·{" "}
+                <kbd className="rounded border border-border bg-muted px-1 py-0.5 font-mono">
+                  Shift + Enter
+                </kbd>{" "}
+                for newline
+              </p>
             </div>
           </div>
-        </div>
+        </section>
       </div>
     </div>
   );

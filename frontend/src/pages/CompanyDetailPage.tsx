@@ -17,21 +17,31 @@ import {
   getNewsByTicker,
   getSocialSentiment,
 } from "@/api/client";
-import Navbar from "@/components/common/Navbar";
 import LoadingSpinner from "@/components/common/LoadingSpinner";
 import ErrorMessage from "@/components/common/ErrorMessage";
 import SentimentBadge from "@/components/common/SentimentBadge";
+import EmptyState from "@/components/common/EmptyState";
 import SentimentChart from "@/components/SentimentChart/SentimentChart";
+import PriceChart from "@/components/PriceChart/PriceChart";
 import CorrelationTable from "@/components/CorrelationTable/CorrelationTable";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { cn } from "@/lib/utils";
 import type { SocialSentiment as SocialSentimentType } from "@/types";
 
 function TrendIcon({ trend, className }: { trend: string; className?: string }) {
   const cls = className ?? "h-4 w-4";
   if (trend === "up")
-    return <TrendingUp className={`${cls} text-[var(--color-positive)]`} aria-hidden="true" />;
+    return <TrendingUp className={cn(cls, "text-positive")} aria-hidden="true" />;
   if (trend === "down")
-    return <TrendingDown className={`${cls} text-[var(--color-negative)]`} aria-hidden="true" />;
-  return <Minus className={`${cls} text-[var(--color-text-muted)]`} aria-hidden="true" />;
+    return <TrendingDown className={cn(cls, "text-negative")} aria-hidden="true" />;
+  return <Minus className={cn(cls, "text-muted-foreground")} aria-hidden="true" />;
 }
 
 interface HeroKpiProps {
@@ -43,34 +53,38 @@ interface HeroKpiProps {
 }
 
 function HeroKpi({ label, value, sublabel, tone = "accent", icon }: HeroKpiProps) {
-  const toneColor =
-    tone === "positive"
-      ? "var(--color-positive)"
-      : tone === "negative"
-        ? "var(--color-negative)"
-        : tone === "neutral"
-          ? "var(--color-text-muted)"
-          : "var(--color-accent)";
+  const toneClasses = {
+    positive: "bg-positive/10 text-positive",
+    negative: "bg-negative/10 text-negative",
+    neutral: "bg-muted text-muted-foreground",
+    accent: "bg-primary/10 text-primary",
+  };
+  const textClass = {
+    positive: "text-positive",
+    negative: "text-negative",
+    neutral: "text-foreground",
+    accent: "text-foreground",
+  };
   return (
-    <div className="flex items-center gap-3 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-4 py-2.5">
+    <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3">
       {icon && (
         <div
-          className="flex h-8 w-8 items-center justify-center rounded-md"
-          style={{ backgroundColor: `${toneColor}1a`, color: toneColor }}
+          className={cn(
+            "flex h-9 w-9 items-center justify-center rounded-md",
+            toneClasses[tone],
+          )}
           aria-hidden="true"
         >
           {icon}
         </div>
       )}
-      <div>
-        <p className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+      <div className="min-w-0">
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
           {label}
         </p>
-        <p className="text-[15px] font-semibold" style={{ color: toneColor }}>
-          {value}
-        </p>
+        <p className={cn("text-lg font-semibold", textClass[tone])}>{value}</p>
         {sublabel && (
-          <p className="text-[11px] text-[var(--color-text-muted)]">{sublabel}</p>
+          <p className="text-[11px] text-muted-foreground">{sublabel}</p>
         )}
       </div>
     </div>
@@ -88,27 +102,25 @@ function SocialCard({ item }: { item: SocialSentimentType }) {
         : "neutral";
   const confidence = Math.max(bullish, bearish);
   return (
-    <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-3.5 py-3">
+    <div className="rounded-md border border-border bg-background px-4 py-3">
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-[13px] font-medium text-[var(--color-text-primary)]">
-            X / Social
-          </p>
-          <p className="text-[11px] text-[var(--color-text-muted)]">
+          <p className="text-sm font-medium text-foreground">X / Social</p>
+          <p className="text-xs text-muted-foreground">
             {item.post_volume ?? 0} posts · buzz{" "}
             {(item.buzz_score ?? 0).toFixed(1)}
           </p>
         </div>
         <SentimentBadge label={label} confidence={confidence} />
       </div>
-      <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-bg-tertiary)]">
+      <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-muted">
         <div
-          className="h-full bg-[var(--color-positive)]"
+          className="h-full bg-positive"
           style={{ width: `${(bullish * 100).toFixed(0)}%` }}
           aria-hidden="true"
         />
       </div>
-      <div className="mt-2 flex justify-between text-[11px] text-[var(--color-text-muted)]">
+      <div className="mt-2 flex justify-between text-xs text-muted-foreground">
         <span>Bullish {(bullish * 100).toFixed(0)}%</span>
         <span>Bearish {(bearish * 100).toFixed(0)}%</span>
       </div>
@@ -142,41 +154,35 @@ export default function CompanyDetailPage() {
       : "neutral";
 
   return (
-    <div className="flex min-h-screen flex-col bg-[var(--color-bg-primary)]">
-      <Navbar />
+    <div className="mx-auto w-full max-w-7xl p-6">
+      <Link
+        to="/"
+        className="mb-4 inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-primary"
+      >
+        <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+        Back to Dashboard
+      </Link>
 
-      <div className="mx-auto w-full max-w-[1200px] flex-1 px-5 py-4">
-        <Link
-          to="/"
-          className="mb-4 inline-flex items-center gap-1.5 text-[12px] text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-accent)]"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-          Back to Dashboard
-        </Link>
+      {isLoading && <LoadingSpinner message="Loading company data…" />}
+      {firstError && <ErrorMessage message={firstError} />}
 
-        {isLoading && <LoadingSpinner message="Loading company data…" />}
-        {firstError && <ErrorMessage message={firstError} />}
-
-        {!isLoading && !firstError && company.data && (
-          <>
-            <header className="mb-5 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5">
+      {!isLoading && !firstError && company.data && (
+        <>
+          <Card className="mb-6">
+            <CardContent className="p-6">
               <div className="flex flex-wrap items-start gap-4">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--color-accent)]/10">
-                  <Building2 className="h-5 w-5 text-[var(--color-accent)]" aria-hidden="true" />
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
+                  <Building2 className="h-5 w-5 text-primary" aria-hidden="true" />
                 </div>
                 <div className="flex-1">
-                  <div className="flex flex-wrap items-center gap-2.5">
-                    <h1 className="text-xl font-semibold text-[var(--color-text-primary)]">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h1 className="text-2xl font-semibold tracking-tight text-foreground">
                       {company.data.name}
                     </h1>
-                    <span className="rounded-md bg-[var(--color-bg-tertiary)] px-2 py-0.5 text-[11px] font-semibold text-[var(--color-text-secondary)]">
-                      {company.data.ticker}
-                    </span>
-                    {sentiment.data && (
-                      <SentimentBadge label={sentimentLabel} />
-                    )}
+                    <Badge variant="secondary">{company.data.ticker}</Badge>
+                    {sentiment.data && <SentimentBadge label={sentimentLabel} />}
                   </div>
-                  <p className="mt-1 text-[12px] text-[var(--color-text-muted)]">
+                  <p className="mt-1 text-xs text-muted-foreground">
                     {company.data.sector ?? "—"} ·{" "}
                     {company.data.industry ?? "—"}
                   </p>
@@ -184,7 +190,7 @@ export default function CompanyDetailPage() {
               </div>
 
               {sentiment.data && (
-                <div className="mt-4 grid grid-cols-2 gap-2.5 md:grid-cols-4">
+                <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
                   <HeroKpi
                     label="Overall"
                     value={`${sentiment.data.overall_score >= 0 ? "+" : ""}${(
@@ -198,18 +204,14 @@ export default function CompanyDetailPage() {
                   />
                   <HeroKpi
                     label="Positive"
-                    value={`${(sentiment.data.average_positive * 100).toFixed(
-                      0,
-                    )}%`}
+                    value={`${(sentiment.data.average_positive * 100).toFixed(0)}%`}
                     sublabel="Avg probability"
                     tone="positive"
                     icon={<TrendingUp className="h-4 w-4" />}
                   />
                   <HeroKpi
                     label="Negative"
-                    value={`${(sentiment.data.average_negative * 100).toFixed(
-                      0,
-                    )}%`}
+                    value={`${(sentiment.data.average_negative * 100).toFixed(0)}%`}
                     sublabel="Avg probability"
                     tone="negative"
                     icon={<TrendingDown className="h-4 w-4" />}
@@ -223,44 +225,60 @@ export default function CompanyDetailPage() {
                   />
                 </div>
               )}
-            </header>
+            </CardContent>
+          </Card>
 
-            <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-              <div className="flex flex-col gap-5 lg:col-span-2">
-                <section aria-label="Sentiment history">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+            <div className="flex flex-col gap-6 lg:col-span-2">
+              <Tabs defaultValue="sentiment">
+                <TabsList>
+                  <TabsTrigger value="sentiment">Sentiment</TabsTrigger>
+                  <TabsTrigger value="price">Price</TabsTrigger>
+                  <TabsTrigger value="correlation">Correlation</TabsTrigger>
+                </TabsList>
+                <TabsContent value="sentiment" className="mt-4">
                   <SentimentChart ticker={safeTicker} />
-                </section>
-                <section aria-label="Correlations">
+                </TabsContent>
+                <TabsContent value="price" className="mt-4">
+                  <PriceChart ticker={safeTicker} />
+                </TabsContent>
+                <TabsContent value="correlation" className="mt-4">
                   <CorrelationTable ticker={safeTicker} />
-                </section>
-              </div>
+                </TabsContent>
+              </Tabs>
+            </div>
 
-              <aside className="flex flex-col gap-5">
-                <section
-                  aria-label="Social sentiment"
-                  className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4"
-                >
-                  <h3 className="mb-3 flex items-center gap-2 text-[13px] font-semibold text-[var(--color-text-primary)]">
-                    <MessageSquare className="h-3.5 w-3.5 text-[var(--color-accent)]" aria-hidden="true" />
-                    Social Sentiment
-                  </h3>
+            <aside className="flex flex-col gap-6">
+              <Card>
+                <CardHeader className="flex-row items-center gap-2 space-y-0 pb-3">
+                  <MessageSquare
+                    className="h-4 w-4 text-primary"
+                    aria-hidden="true"
+                  />
+                  <CardTitle className="text-sm">Social sentiment</CardTitle>
+                </CardHeader>
+                <CardContent>
                   {socialData ? (
                     <SocialCard item={socialData} />
                   ) : (
-                    <p className="rounded-[var(--radius-md)] border border-dashed border-[var(--color-border)] bg-[var(--color-bg-primary)] px-3 py-4 text-center text-[12px] text-[var(--color-text-muted)]">
-                      No social data yet.
-                    </p>
+                    <EmptyState
+                      icon={MessageSquare}
+                      title="No social data yet"
+                      description="Social metrics haven't been collected for this ticker."
+                    />
                   )}
-                </section>
+                </CardContent>
+              </Card>
 
-                <section
-                  aria-label="Recent news"
-                  className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4"
-                >
-                  <h3 className="mb-3 flex items-center gap-2 text-[13px] font-semibold text-[var(--color-text-primary)]">
-                    <Activity className="h-3.5 w-3.5 text-[var(--color-accent)]" aria-hidden="true" />
-                    Recent News
-                  </h3>
+              <Card>
+                <CardHeader className="flex-row items-center gap-2 space-y-0 pb-3">
+                  <Activity
+                    className="h-4 w-4 text-primary"
+                    aria-hidden="true"
+                  />
+                  <CardTitle className="text-sm">Recent news</CardTitle>
+                </CardHeader>
+                <CardContent>
                   {articles.length > 0 ? (
                     <ul className="flex flex-col gap-2">
                       {articles.map((article) => (
@@ -269,19 +287,19 @@ export default function CompanyDetailPage() {
                             href={article.url ?? "#"}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="group flex flex-col gap-1 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-2.5 transition-all duration-150 hover:border-[var(--color-accent)]/30"
+                            className="group flex flex-col gap-1 rounded-md border border-border bg-background p-3 transition-all hover:border-primary/40"
                           >
                             <div className="flex items-start justify-between gap-2">
-                              <p className="line-clamp-2 text-[12px] font-medium leading-snug text-[var(--color-text-primary)] transition-colors group-hover:text-[var(--color-accent)]">
+                              <p className="line-clamp-2 text-xs font-medium leading-snug text-foreground transition-colors group-hover:text-primary">
                                 {article.title}
                               </p>
                               <ExternalLink
-                                className="mt-0.5 h-3 w-3 shrink-0 text-[var(--color-text-muted)] opacity-0 transition-opacity group-hover:opacity-100"
+                                className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
                                 aria-hidden="true"
                               />
                             </div>
                             <div className="flex items-center gap-2">
-                              <span className="text-[10px] text-[var(--color-text-muted)]">
+                              <span className="text-[10px] text-muted-foreground">
                                 {article.source}
                               </span>
                               {article.sentiment && (
@@ -301,16 +319,18 @@ export default function CompanyDetailPage() {
                       ))}
                     </ul>
                   ) : (
-                    <p className="rounded-[var(--radius-md)] border border-dashed border-[var(--color-border)] bg-[var(--color-bg-primary)] px-3 py-4 text-center text-[12px] text-[var(--color-text-muted)]">
-                      No recent articles for this ticker.
-                    </p>
+                    <EmptyState
+                      icon={Newspaper}
+                      title="No recent articles"
+                      description="No articles collected for this ticker yet."
+                    />
                   )}
-                </section>
-              </aside>
-            </div>
-          </>
-        )}
-      </div>
+                </CardContent>
+              </Card>
+            </aside>
+          </div>
+        </>
+      )}
     </div>
   );
 }

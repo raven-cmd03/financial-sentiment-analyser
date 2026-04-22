@@ -1,7 +1,16 @@
 import { useState } from "react";
-import { CheckCircle, Loader2 } from "lucide-react";
+import { CheckCircle2, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { activateModel } from "@/api/client";
 import type { ModelInfo } from "@/types";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 
 interface ActiveModelSwitcherProps {
   models: ModelInfo[];
@@ -14,58 +23,72 @@ export default function ActiveModelSwitcher({
 }: ActiveModelSwitcherProps) {
   const [activating, setActivating] = useState<string | null>(null);
 
-  const handleActivate = async (id: string) => {
+  const handleActivate = async (id: string, name: string) => {
     setActivating(id);
     try {
       await activateModel(id);
+      toast.success(`Activated ${name}`);
       onSwitch();
     } catch (err) {
-      console.error("Failed to activate model:", err);
+      toast.error("Activation failed", {
+        description: (err as Error).message,
+      });
     } finally {
       setActivating(null);
     }
   };
 
-  return (
-    <div className="space-y-2">
-      {models.map((m) => (
-        <div
-          key={m.id}
-          className={`flex items-center justify-between rounded-lg border p-3 transition-colors ${
-            m.is_active
-              ? "border-blue-500/50 bg-blue-500/10"
-              : "border-gray-700 bg-gray-800"
-          }`}
-        >
-          <div>
-            <p className="text-sm font-medium text-gray-200">{m.name}</p>
-            <p className="text-xs text-gray-500">
-              {m.base_model} · v{m.version}
-              {m.accuracy !== undefined &&
-                ` · ${(m.accuracy * 100).toFixed(1)}% acc`}
-            </p>
-          </div>
+  if (models.length === 0) return null;
 
-          {m.is_active ? (
-            <span className="flex items-center gap-1.5 text-xs font-medium text-blue-400">
-              <CheckCircle className="h-3.5 w-3.5" />
-              Active
-            </span>
-          ) : (
-            <button
-              onClick={() => handleActivate(m.id)}
-              disabled={activating !== null}
-              className="rounded-md bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-200 transition-colors hover:bg-gray-600 disabled:opacity-50"
-            >
-              {activating === m.id ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                "Activate"
-              )}
-            </button>
-          )}
-        </div>
-      ))}
-    </div>
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm">Active model</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {models.map((m) => (
+          <div
+            key={m.id}
+            className={cn(
+              "flex items-center justify-between rounded-md border p-3 transition-colors",
+              m.is_active
+                ? "border-primary/60 bg-primary/5"
+                : "border-border bg-background",
+            )}
+          >
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-foreground">
+                {m.name}
+              </p>
+              <p className="text-xs capitalize text-muted-foreground">
+                {m.source}
+                {m.accuracy != null &&
+                  ` · ${(m.accuracy * 100).toFixed(1)}% acc`}
+              </p>
+            </div>
+
+            {m.is_active ? (
+              <span className="flex items-center gap-1.5 text-xs font-medium text-primary">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                Active
+              </span>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => handleActivate(m.id, m.name)}
+                disabled={activating !== null}
+              >
+                {activating === m.id ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  "Activate"
+                )}
+              </Button>
+            )}
+          </div>
+        ))}
+      </CardContent>
+    </Card>
   );
 }

@@ -26,8 +26,20 @@ class Settings(BaseSettings):
     # News APIs
     GOOGLE_NEWS_API_KEY: str = ""
 
-    # FinBERT
-    FINBERT_MODEL: str = "ProsusAI/finbert"
+    # Alpha Vantage (news + market data). Free tier: 5 req/min, 500 req/day.
+    # When empty, Alpha Vantage is skipped and the system falls back to
+    # Google News / Yahoo Finance / yfinance only.
+    ALPHA_VANTAGE_API_KEY: str = ""
+    # How many articles to pull per ticker per news-collection tick.
+    ALPHA_VANTAGE_NEWS_LIMIT: int = 10
+
+    # Sentiment model. Default: yiyanghkust/finbert-tone — trained on
+    # 10k annotated analyst-report sentences; outperforms ProsusAI/finbert
+    # on financial news in independent benchmarks. The SentimentAnalyzer
+    # auto-detects the label-index mapping from ``model.config.id2label``
+    # so swapping to ProsusAI/finbert, ahmedrachid/FinancialBERT-Sentiment-
+    # Analysis, or a fine-tuned checkpoint requires no code changes.
+    FINBERT_MODEL: str = "yiyanghkust/finbert-tone"
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
     MODEL_DIR: str = "/app/data/models"
     DATASET_DIR: str = "/app/data/datasets"

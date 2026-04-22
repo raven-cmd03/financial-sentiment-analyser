@@ -16,6 +16,9 @@ import { getSentimentHistory } from "@/api/client";
 import { useAppContext } from "@/context/AppContext";
 import LoadingSpinner from "@/components/common/LoadingSpinner";
 import ErrorMessage from "@/components/common/ErrorMessage";
+import EmptyState from "@/components/common/EmptyState";
+import { ChartCard, ChartTooltip, pickXAxisTicks } from "@/lib/charts";
+import { LineChart as LineChartIcon } from "lucide-react";
 import type { TrendData } from "@/types";
 
 interface SentimentChartProps {
@@ -28,7 +31,7 @@ interface ChartPoint {
   positive: number;
   negative: number;
   neutral: number;
-  sentiment: number;
+  score: number;
   articles: number;
 }
 
@@ -39,7 +42,7 @@ function toChartData(raw: TrendData[]): ChartPoint[] {
     positive: d.positive_ratio,
     negative: d.negative_ratio,
     neutral: d.neutral_ratio,
-    sentiment: d.sentiment_score,
+    score: d.sentiment_score,
     articles: d.article_count,
   }));
 }
@@ -50,42 +53,43 @@ interface TooltipPayloadEntry {
   color: string;
 }
 
-interface CustomTooltipProps {
+function SentimentTooltip({
+  active,
+  payload,
+  label,
+}: {
   active?: boolean;
   payload?: TooltipPayloadEntry[];
   label?: string;
-}
-
-function ChartTooltip({ active, payload, label }: CustomTooltipProps) {
+}) {
   if (!active || !payload?.length) return null;
   const articles = payload.find((p) => p.name === "articles")?.value;
 
+  const rows = payload
+    .filter((p) => p.name !== "articles" && p.name !== "score")
+    .map((p) => ({
+      label: p.name,
+      value: `${(p.value * 100).toFixed(1)}%`,
+      color: p.color,
+    }));
+
+  const score = payload.find((p) => p.name === "score")?.value;
+
+  if (score !== undefined) {
+    rows.unshift({
+      label: "Net score",
+      value: `${score >= 0 ? "+" : ""}${(score * 100).toFixed(1)}`,
+      color: "hsl(var(--primary))",
+    });
+  }
+
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3 shadow-2xl">
-      <p className="mb-2 text-[11px] font-semibold text-[var(--color-text-primary)]">
-        {label}
-      </p>
-      {payload
-        .filter((p) => p.name !== "articles")
-        .map((entry) => (
-          <div
-            key={entry.name}
-            className="flex items-center justify-between gap-6 py-0.5 text-[11px]"
-          >
-            <span className="capitalize" style={{ color: entry.color }}>
-              {entry.name}
-            </span>
-            <span className="font-mono text-[var(--color-text-primary)]">
-              {(entry.value * 100).toFixed(1)}%
-            </span>
-          </div>
-        ))}
-      {articles != null && (
-        <p className="mt-2 border-t border-[var(--color-border)] pt-1.5 text-[10px] text-[var(--color-text-muted)]">
-          {articles} article{articles !== 1 ? "s" : ""} analyzed
-        </p>
-      )}
-    </div>
+    <ChartTooltip
+      title={`${label ?? ""}${
+        articles != null ? ` · ${articles} article${articles !== 1 ? "s" : ""}` : ""
+      }`}
+      rows={rows}
+    />
   );
 }
 
@@ -103,80 +107,117 @@ export default function SentimentChart({ ticker }: SentimentChartProps) {
   );
 
   const chartData = useMemo(() => (data ? toChartData(data) : []), [data]);
+  const ticks = useMemo(
+    () => pickXAxisTicks(chartData, "dateLabel", 6),
+    [chartData],
+  );
 
   if (loading) return <LoadingSpinner message="Fetching sentiment data…" />;
   if (error) return <ErrorMessage message={error} onRetry={refetch} />;
+
   if (chartData.length === 0) {
     return (
-      <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-6">
-        <p className="py-8 text-center text-sm text-[var(--color-text-muted)]">
-          No sentiment data available for {ticker.toUpperCase()} yet.
-        </p>
-      </div>
+      <ChartCard
+        title={`Sentiment — ${ticker.toUpperCase()}`}
+        badge={`${days}d`}
+      >
+        <EmptyState
+          icon={LineChartIcon}
+          title="No sentiment data yet"
+          description={`We haven't scored any articles for ${ticker.toUpperCase()} in this range. Try widening the window.`}
+        />
+      </ChartCard>
     );
   }
 
   return (
-    <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5">
-      <div className="mb-4 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
-          Sentiment — {ticker.toUpperCase()}
-        </h3>
-        <span className="rounded-full bg-[var(--color-bg-tertiary)] px-2.5 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]">
-          {days}d
-        </span>
-      </div>
-
-      <ResponsiveContainer width="100%" height={320}>
-        <ComposedChart data={chartData}>
+    <ChartCard
+      title={`Sentiment — ${ticker.toUpperCase()}`}
+      subtitle="Probability mix per day"
+      badge={`${days}d`}
+    >
+      <ResponsiveContainer width="100%" height={300}>
+        <ComposedChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: -8 }}>
           <defs>
             <linearGradient id="sentGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#6366f1" stopOpacity={0.2} />
-              <stop offset="100%" stopColor="#6366f1" stopOpacity={0} />
+              <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.3} />
+              <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity={0} />
             </linearGradient>
           </defs>
 
           <CartesianGrid
             strokeDasharray="3 3"
-            stroke="var(--color-border)"
+            stroke="hsl(var(--border))"
             vertical={false}
           />
-
           <XAxis
             dataKey="dateLabel"
-            tick={{ fontSize: 10, fill: "var(--color-text-muted)" }}
+            ticks={ticks}
+            interval="preserveStartEnd"
+            tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
             axisLine={false}
             tickLine={false}
           />
-
           <YAxis
             yAxisId="left"
             domain={[0, 1]}
-            tick={{ fontSize: 10, fill: "var(--color-text-muted)" }}
+            tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
             axisLine={false}
             tickLine={false}
             tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`}
           />
-
           <YAxis yAxisId="right" orientation="right" hide />
-
-          <Tooltip content={<ChartTooltip />} />
+          <Tooltip content={<SentimentTooltip />} />
           <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={7} />
 
           <Area
             yAxisId="left"
             type="monotone"
-            dataKey="sentiment"
+            dataKey="score"
             fill="url(#sentGrad)"
             stroke="none"
-            name="sentiment"
+            name="score"
+            legendType="none"
           />
-          <Line yAxisId="left" type="monotone" dataKey="positive" stroke="#34d399" strokeWidth={2} dot={false} name="positive" />
-          <Line yAxisId="left" type="monotone" dataKey="negative" stroke="#f87171" strokeWidth={2} dot={false} name="negative" />
-          <Line yAxisId="left" type="monotone" dataKey="neutral" stroke="#6b7280" strokeWidth={1.5} dot={false} strokeDasharray="4 3" name="neutral" />
-          <Line yAxisId="right" type="monotone" dataKey="articles" stroke="transparent" dot={false} name="articles" legendType="none" />
+          <Line
+            yAxisId="left"
+            type="monotone"
+            dataKey="positive"
+            stroke="hsl(var(--positive))"
+            strokeWidth={2}
+            dot={false}
+            name="positive"
+          />
+          <Line
+            yAxisId="left"
+            type="monotone"
+            dataKey="negative"
+            stroke="hsl(var(--negative))"
+            strokeWidth={2}
+            dot={false}
+            name="negative"
+          />
+          <Line
+            yAxisId="left"
+            type="monotone"
+            dataKey="neutral"
+            stroke="hsl(var(--muted-foreground))"
+            strokeWidth={1.5}
+            dot={false}
+            strokeDasharray="4 3"
+            name="neutral"
+          />
+          <Line
+            yAxisId="right"
+            type="monotone"
+            dataKey="articles"
+            stroke="transparent"
+            dot={false}
+            name="articles"
+            legendType="none"
+          />
         </ComposedChart>
       </ResponsiveContainer>
-    </div>
+    </ChartCard>
   );
 }

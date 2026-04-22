@@ -66,6 +66,21 @@ export interface MarketData {
   volume?: number | null;
 }
 
+// Row shape returned by /api/companies/{ticker}/market
+export interface MarketDataPoint {
+  date: string;
+  open: number | null;
+  close: number | null;
+  high: number | null;
+  low: number | null;
+  volume: number | null;
+}
+
+export interface MarketDataResponse {
+  ticker: string;
+  rows: MarketDataPoint[];
+}
+
 export interface CorrelationData {
   correlation_id: number;
   ticker_symbol: string;

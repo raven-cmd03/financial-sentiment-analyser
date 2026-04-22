@@ -1,9 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { isLockedError } from "@/api/client";
 
 interface UseApiResult<T> {
   data: T | null;
   loading: boolean;
   error: string | null;
+  /** `true` when the backend rejected the request with 401/403 — UI shows a gated state. */
+  locked: boolean;
   refetch: () => void;
 }
 
@@ -14,6 +17,7 @@ export function useApi<T>(
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [locked, setLocked] = useState(false);
   const mountedRef = useRef(true);
 
   // Keep the latest fetcher in a ref so fetchData's identity only changes with `deps`.
@@ -27,6 +31,7 @@ export function useApi<T>(
   const fetchData = useCallback(() => {
     setLoading(true);
     setError(null);
+    setLocked(false);
     fetcherRef
       .current()
       .then((result) => {
@@ -35,9 +40,11 @@ export function useApi<T>(
         }
       })
       .catch((err: Error) => {
-        if (mountedRef.current) {
-          setError(err.message);
+        if (!mountedRef.current) return;
+        if (isLockedError(err)) {
+          setLocked(true);
         }
+        setError(err.message);
       })
       .finally(() => {
         if (mountedRef.current) {
@@ -57,5 +64,5 @@ export function useApi<T>(
     };
   }, [fetchData]);
 
-  return { data, loading, error, refetch: fetchData };
+  return { data, loading, error, locked, refetch: fetchData };
 }
