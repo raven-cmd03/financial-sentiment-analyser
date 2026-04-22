@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     # How many articles to pull per ticker per news-collection tick.
     ALPHA_VANTAGE_NEWS_LIMIT: int = 10
 
+    # HuggingFace Hub token — only needed for gated datasets used by the
+    # ``hf_corpus_backfill`` script (e.g. Brianferrell787/financial-news-
+    # multisource). Generate at https://huggingface.co/settings/tokens
+    # and accept the dataset's access terms before running the backfill.
+    HUGGINGFACE_API_KEY: str = ""
+
     # Sentiment model. Default: yiyanghkust/finbert-tone — trained on
     # 10k annotated analyst-report sentences; outperforms ProsusAI/finbert
     # on financial news in independent benchmarks. The SentimentAnalyzer

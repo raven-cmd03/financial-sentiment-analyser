@@ -246,7 +246,13 @@ def _persist_articles_sync(
         pub_date = a.get("publication_date")
         if isinstance(pub_date, str):
             try:
-                pub_date = datetime.fromisoformat(pub_date)
+                # Python 3.10's ``fromisoformat`` rejects the trailing
+                # ``Z``; GDELT emits ``+00:00`` (fine) but the HF corpus
+                # emits ``Z`` (fails). Swap once so both work and we
+                # don't silently substitute ``utcnow`` for real dates.
+                pub_date = datetime.fromisoformat(
+                    pub_date.replace("Z", "+00:00")
+                )
                 if pub_date.tzinfo is not None:
                     pub_date = pub_date.astimezone(timezone.utc).replace(tzinfo=None)
             except (ValueError, TypeError):
@@ -331,13 +337,17 @@ async def _fetch_window_from_provider(
         if gdelt_client is None:
             return [], False
         # GDELT keyword search: include both ticker and company name so
-        # we catch headlines that mention only one variant. Company
-        # names often end with a legal suffix ("Apple Inc.", "Tesla,
-        # Inc.") — GDELT's quoted-phrase parser is unhappy with trailing
-        # punctuation, so we strip it. ``OR``-queries must also be
-        # wrapped in parens (the client handles that).
+        # we catch headlines that mention only one variant. Two gotchas
+        # from GDELT's parser, learned empirically:
+        #   1. Short quoted phrases (<~2 words, ~5 chars) are rejected
+        #      with "The specified phrase is too short." — so the
+        #      ticker goes in *unquoted*.
+        #   2. Trailing legal-suffix punctuation in "Apple Inc.",
+        #      "Tesla, Inc." breaks the quoted-phrase lexer — strip it.
+        # ``OR``-queries must also be wrapped in parens (handled by
+        # the client's ``_build_query``).
         company_clean = company.company_name.strip().rstrip(".,;:")
-        query = f'"{company.ticker_symbol}" OR "{company_clean}"'
+        query = f'{company.ticker_symbol} OR "{company_clean}"'
         articles = await gdelt_client.fetch_news(
             query,
             max_results=250,

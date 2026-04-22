@@ -9,6 +9,52 @@ from app.database import SyncSessionLocal
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Process-scoped SentimentAnalyzer cache.
+#
+# Building a ``SentimentAnalyzer`` loads ~440MB of BERT weights from disk and
+# DMAs them to the GPU (~1–2s on a modern card). Doing that on every Celery
+# task adds ~20–30 min of pure overhead when the backfills eventually
+# dispatch hundreds of batches. We cache the analyzer per resolved model
+# name so repeat invocations in the same worker process reuse the already-
+# loaded weights. A new fine-tuned model activating in the DB produces a
+# different key, which triggers an eviction-and-reload — so hot-swap
+# semantics (see ``_resolve_active_model_name``) are preserved.
+# ---------------------------------------------------------------------------
+_ANALYZER_CACHE: dict[str, object] = {}
+_ANALYZER_KEY: str | None = None
+
+
+def _get_analyzer(model_name: str | None):
+    """Return a cached ``SentimentAnalyzer`` for ``model_name``.
+
+    ``None`` means "use ``settings.FINBERT_MODEL``"; we canonicalise to that
+    resolved string so base <-> fine-tuned transitions always invalidate
+    the cache cleanly.
+    """
+    from app.services.sentiment_analyzer import SentimentAnalyzer
+    from app.config import get_settings
+
+    global _ANALYZER_KEY
+
+    key = model_name or get_settings().FINBERT_MODEL
+    cached = _ANALYZER_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    if _ANALYZER_CACHE and key != _ANALYZER_KEY:
+        logger.info(
+            "Evicting cached analyzer '%s' to load '%s'", _ANALYZER_KEY, key
+        )
+        _ANALYZER_CACHE.clear()
+
+    logger.info("Loading sentiment analyzer for '%s' (caching for reuse)", key)
+    analyzer = SentimentAnalyzer(model_name=model_name)
+    _ANALYZER_CACHE[key] = analyzer
+    _ANALYZER_KEY = key
+    return analyzer
+
+
 def _hash_url(url: str) -> str:
     return hashlib.sha256(url.encode("utf-8")).hexdigest()
 
@@ -179,10 +225,21 @@ def _resolve_active_model_name(session) -> str | None:
     return None
 
 
+# Inference batch size handed to ``SentimentAnalyzer.batch_analyze``. Keep
+# this modest: BERT-base at 512 tokens with batch=32 fits comfortably in
+# ~4–5 GB of VRAM and typically saturates a modern consumer GPU.
+_INFERENCE_BATCH_SIZE = 32
+
+
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=30)
 def analyze_sentiment_task(self, article_ids: list):
-    """Run FinBERT sentiment analysis on the given articles."""
-    from app.services.sentiment_analyzer import SentimentAnalyzer
+    """Run FinBERT sentiment analysis on the given articles.
+
+    Inference is GPU-batched (``batch_analyze``) and the analyzer is
+    cached per-worker-process via ``_get_analyzer`` — together these
+    turn a 3–5s per-task cost into <1s for the common 100-article
+    batch size used by the backfill orchestrators.
+    """
     from app.models import NewsArticle, SentimentResult
 
     logger.info("Analyzing sentiment for %d articles", len(article_ids))
@@ -191,7 +248,7 @@ def analyze_sentiment_task(self, article_ids: list):
         active_model = _resolve_active_model_name(session)
         if active_model:
             logger.info("Using active fine-tuned model at %s", active_model)
-        analyzer = SentimentAnalyzer(model_name=active_model)
+        analyzer = _get_analyzer(active_model)
 
         # Skip articles that already have a sentiment result (idempotent re-runs).
         existing_ids = {
@@ -207,16 +264,37 @@ def analyze_sentiment_task(self, article_ids: list):
                 len(existing_ids),
             )
 
+        if not pending_ids:
+            return {"analyzed": 0, "skipped_existing": len(existing_ids)}
+
         articles = (
             session.query(NewsArticle)
             .filter(NewsArticle.article_id.in_(pending_ids))
             .all()
         )
-        results = []
-        for article in articles:
+        if not articles:
+            logger.info("No articles materialised for the pending ids")
+            return {"analyzed": 0, "skipped_existing": len(existing_ids)}
+
+        texts = [
+            f"{a.title}. {a.content}" if a.content else a.title
+            for a in articles
+        ]
+
+        try:
+            predictions = analyzer.batch_analyze(
+                texts, batch_size=_INFERENCE_BATCH_SIZE
+            )
+        except Exception as exc:
+            # Pure inference failure — let Celery retry the whole batch.
+            # We have no partial persistence to unwind because writes
+            # happen after this point.
+            logger.exception("Batched FinBERT inference failed")
+            raise self.retry(exc=exc)
+
+        results: list[str] = []
+        for article, prediction in zip(articles, predictions):
             try:
-                text = f"{article.title}. {article.content}" if article.content else article.title
-                prediction = analyzer.analyze(text)
                 with session.begin_nested():
                     result = SentimentResult(
                         article_id=article.article_id,
@@ -229,12 +307,20 @@ def analyze_sentiment_task(self, article_ids: list):
                     session.add(result)
                 results.append(article.article_id)
             except Exception as exc:
-                logger.error("Sentiment analysis failed for article %s: %s", article.article_id, exc)
+                logger.error(
+                    "Failed to persist sentiment for article %s: %s",
+                    article.article_id,
+                    exc,
+                )
         session.commit()
         logger.info("Sentiment analysis complete: %d results", len(results))
 
-        if results:
-            index_vector_store_task.delay()
+        # NOTE: we used to chain ``index_vector_store_task.delay()`` here, but
+        # Celery beat already runs the same indexer every 30 minutes (see
+        # ``celery_app.beat_schedule['index-vector-store']``). Chaining it
+        # per-batch during a backfill piles up thousands of redundant jobs
+        # that each re-index the same ~200 most-recent articles and
+        # completely starve the pool of sentiment work. Let beat own it.
 
         return {"analyzed": len(results), "skipped_existing": len(existing_ids)}
     except Exception as exc:

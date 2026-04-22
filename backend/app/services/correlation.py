@@ -173,10 +173,13 @@ class CorrelationCalculator:
         aligned by date."""
         cutoff = datetime.utcnow() - timedelta(days=days)
 
-        # Daily avg sentiment (positive - negative) for this ticker only
+        # Daily avg sentiment (positive - negative) for this ticker only.
+        # Bucketed by NewsArticle.publication_date so backfills don't
+        # collapse thousands of historical articles onto the day they
+        # were scored — see the matching fix in api/companies.py.
         sent_q = (
             select(
-                func.date(SentimentResult.analyzed_date).label("day"),
+                func.date(NewsArticle.publication_date).label("day"),
                 func.avg(SentimentResult.positive_score - SentimentResult.negative_score).label("score"),
             )
             .join(NewsArticle, SentimentResult.article_id == NewsArticle.article_id)
@@ -184,10 +187,10 @@ class CorrelationCalculator:
             .join(Company, Company.company_id == ArticleCompany.company_id)
             .where(
                 Company.ticker_symbol == ticker,
-                SentimentResult.analyzed_date >= cutoff,
+                NewsArticle.publication_date >= cutoff,
             )
-            .group_by(func.date(SentimentResult.analyzed_date))
-            .order_by(func.date(SentimentResult.analyzed_date))
+            .group_by(func.date(NewsArticle.publication_date))
+            .order_by(func.date(NewsArticle.publication_date))
         )
         sent_rows = (await db.execute(sent_q)).all()
         sent_df = pd.DataFrame(sent_rows, columns=["day", "score"])

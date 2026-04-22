@@ -135,12 +135,21 @@ async def get_company_sentiment(ticker: str, db: AsyncSession = Depends(get_db))
 async def get_sentiment_history(
     ticker: str, days: int = 30, db: AsyncSession = Depends(get_db)
 ):
+    """Daily sentiment aggregates for ``ticker`` over the last ``days``.
+
+    Bucketed by ``NewsArticle.publication_date`` (when the article was
+    *written*), NOT ``SentimentResult.analyzed_date`` (when FinBERT
+    scored it). Backfills that process thousands of old articles in a
+    single burst used to pile them all onto ``analyzed_date = today``
+    and produce a giant false spike; grouping by publication date fixes
+    that and gives a true time-series.
+    """
     ticker = ticker.upper()
     cutoff = datetime.utcnow() - timedelta(days=days)
 
     result = await db.execute(
         select(
-            cast(SentimentResult.analyzed_date, Date).label("date"),
+            cast(NewsArticle.publication_date, Date).label("date"),
             func.avg(SentimentResult.positive_score).label("avg_positive"),
             func.avg(SentimentResult.negative_score).label("avg_negative"),
             func.avg(SentimentResult.neutral_score).label("avg_neutral"),
@@ -149,9 +158,12 @@ async def get_sentiment_history(
         .join(NewsArticle, SentimentResult.article_id == NewsArticle.article_id)
         .join(ArticleCompany, ArticleCompany.article_id == NewsArticle.article_id)
         .join(Company, Company.company_id == ArticleCompany.company_id)
-        .where(Company.ticker_symbol == ticker, SentimentResult.analyzed_date >= cutoff)
-        .group_by(cast(SentimentResult.analyzed_date, Date))
-        .order_by(cast(SentimentResult.analyzed_date, Date))
+        .where(
+            Company.ticker_symbol == ticker,
+            NewsArticle.publication_date >= cutoff,
+        )
+        .group_by(cast(NewsArticle.publication_date, Date))
+        .order_by(cast(NewsArticle.publication_date, Date))
     )
 
     rows = result.all()

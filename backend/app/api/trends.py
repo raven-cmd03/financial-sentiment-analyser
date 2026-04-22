@@ -16,19 +16,26 @@ async def get_market_trends(
     days: int = Query(30, ge=1, le=365),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return daily aggregated sentiment across all companies."""
+    """Return daily aggregated sentiment across all companies.
+
+    Bucketed by ``NewsArticle.publication_date`` (when the article was
+    *written*). Using ``analyzed_date`` here would pile every
+    backfilled article onto whichever day FinBERT happened to score
+    it, producing a meaningless spike.
+    """
     cutoff = datetime.utcnow() - timedelta(days=days)
     result = await db.execute(
         select(
-            cast(SentimentResult.analyzed_date, Date).label("date"),
+            cast(NewsArticle.publication_date, Date).label("date"),
             func.avg(SentimentResult.positive_score).label("avg_positive"),
             func.avg(SentimentResult.negative_score).label("avg_negative"),
             func.avg(SentimentResult.neutral_score).label("avg_neutral"),
             func.count(SentimentResult.result_id).label("article_count"),
         )
-        .where(SentimentResult.analyzed_date >= cutoff)
-        .group_by(cast(SentimentResult.analyzed_date, Date))
-        .order_by(cast(SentimentResult.analyzed_date, Date))
+        .join(NewsArticle, SentimentResult.article_id == NewsArticle.article_id)
+        .where(NewsArticle.publication_date >= cutoff)
+        .group_by(cast(NewsArticle.publication_date, Date))
+        .order_by(cast(NewsArticle.publication_date, Date))
     )
     rows = result.all()
     return [
@@ -51,12 +58,16 @@ async def get_company_trends(
     days: int = Query(30, ge=1, le=365),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return daily aggregated sentiment for a specific company."""
+    """Return daily aggregated sentiment for a specific company.
+
+    Same publication-date bucketing as ``get_market_trends`` — see
+    that docstring for the rationale.
+    """
     ticker = ticker.upper()
     cutoff = datetime.utcnow() - timedelta(days=days)
     result = await db.execute(
         select(
-            cast(SentimentResult.analyzed_date, Date).label("date"),
+            cast(NewsArticle.publication_date, Date).label("date"),
             func.avg(SentimentResult.positive_score).label("avg_positive"),
             func.avg(SentimentResult.negative_score).label("avg_negative"),
             func.avg(SentimentResult.neutral_score).label("avg_neutral"),
@@ -65,9 +76,12 @@ async def get_company_trends(
         .join(NewsArticle, SentimentResult.article_id == NewsArticle.article_id)
         .join(ArticleCompany, ArticleCompany.article_id == NewsArticle.article_id)
         .join(Company, Company.company_id == ArticleCompany.company_id)
-        .where(Company.ticker_symbol == ticker, SentimentResult.analyzed_date >= cutoff)
-        .group_by(cast(SentimentResult.analyzed_date, Date))
-        .order_by(cast(SentimentResult.analyzed_date, Date))
+        .where(
+            Company.ticker_symbol == ticker,
+            NewsArticle.publication_date >= cutoff,
+        )
+        .group_by(cast(NewsArticle.publication_date, Date))
+        .order_by(cast(NewsArticle.publication_date, Date))
     )
     rows = result.all()
     if not rows:

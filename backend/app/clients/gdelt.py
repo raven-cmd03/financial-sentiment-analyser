@@ -162,12 +162,19 @@ class GdeltClient(BaseAPIClient):
             logger.warning("GDELT request failed: %s", exc)
             return []
 
-        # GDELT occasionally returns an HTML error page with 200 status
-        # when overloaded. Guard the JSON decode so we degrade to [].
+        # GDELT occasionally returns a plaintext error with 200 status
+        # ("The specified phrase is too short.", rate-limit notices,
+        # etc.). Guard the JSON decode and surface the body so a
+        # broken query is obvious from the logs.
         try:
             payload = response.json()
         except Exception as exc:
-            logger.warning("GDELT returned non-JSON payload: %s", exc)
+            body = (response.text or "").strip()
+            logger.warning(
+                "GDELT returned non-JSON payload: %s | body=%r",
+                exc,
+                body[:200],
+            )
             return []
 
         articles = self._parse_articles(payload)
