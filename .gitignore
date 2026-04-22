@@ -1,0 +1,48 @@
+# --- Secrets & env ---
+.env
+.env.*
+!.env.example
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.log
+backend/celerybeat-schedule*
+backend/celerybeat.pid
+
+# --- Virtualenvs ---
+.venv/
+venv/
+env/
+
+# --- Data / models (keep out of git; mount as volumes instead) ---
+backend/data/models/
+backend/data/datasets/
+*.pt
+*.bin
+*.safetensors
+*.onnx
+
+# --- Node / frontend ---
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- IDE / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Docker build junk ---
+*.tar
