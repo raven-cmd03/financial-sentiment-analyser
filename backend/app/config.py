@@ -72,6 +72,16 @@ class Settings(BaseSettings):
     NEWS_COLLECTION_INTERVAL_MINUTES: int = 15
     SOCIAL_SENTIMENT_INTERVAL_MINUTES: int = 60
 
+    # Backtest trader-agent simulation. Reports + JSON artefacts go under
+    # SIMULATION_OUTPUT_DIR/<run_id>/. SIMULATION_GROQ_RPM bounds the in-
+    # process rate limiter around LLM calls; the Groq free tier allows
+    # ~30 RPM on llama-3.3-70b-versatile so 25 leaves some headroom.
+    SIMULATION_OUTPUT_DIR: str = "/app/data/simulations"
+    SIMULATION_GROQ_RPM: int = 25
+    # Dollars each agent starts with. Kept identical for treatment + control
+    # so the head-to-head is an apples-to-apples comparison.
+    SIMULATION_STARTING_CASH: float = 1000.0
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
     @field_validator("SECRET_KEY")

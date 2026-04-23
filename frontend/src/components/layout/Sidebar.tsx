@@ -61,7 +61,7 @@ export default function Sidebar() {
   return (
     <aside
       aria-label="Primary navigation"
-      className="hidden h-screen w-16 shrink-0 flex-col items-center border-r border-sidebar-border bg-sidebar py-4 md:flex"
+      className="sticky top-0 hidden h-screen w-16 shrink-0 flex-col items-center overflow-y-auto border-r border-sidebar-border bg-sidebar py-4 md:flex"
     >
       <NavLink
         to="/"

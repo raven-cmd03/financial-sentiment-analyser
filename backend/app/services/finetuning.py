@@ -8,8 +8,6 @@ import torch
 from datasets import Dataset, load_dataset
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 from transformers import (
-    AutoModelForSequenceClassification,
-    AutoTokenizer,
     Trainer,
     TrainerCallback,
     TrainingArguments,
@@ -17,6 +15,7 @@ from transformers import (
 
 from app.config import get_settings
 from app.models import FinetuningJob
+from app.services.sentiment_analyzer import _load_model, _load_tokenizer
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -29,6 +28,10 @@ AVAILABLE_DATASETS = [
         "description": "~4,800 English financial news sentences labeled positive / negative / neutral "
         "(100 % annotator agreement split).",
         "labels": ["negative", "neutral", "positive"],
+        # Dataset label index → canonical app label. Used to write
+        # model.config.id2label at save time so downstream inference
+        # doesn't inherit a stale map from the base checkpoint.
+        "canonical_labels": {0: "Negative", 1: "Neutral", 2: "Positive"},
     },
     {
         "name": "fintweet-sentiment-2025",
@@ -36,6 +39,8 @@ AVAILABLE_DATASETS = [
         "hf_config": None,
         "description": "Financial tweets labeled with sentiment — useful for social-media domain adaptation.",
         "labels": ["bearish", "bullish", "neutral"],
+        # 0=Bearish→Negative, 1=Bullish→Positive, 2=Neutral→Neutral
+        "canonical_labels": {0: "Negative", 1: "Positive", 2: "Neutral"},
     },
 ]
 
@@ -135,10 +140,33 @@ class FineTuningPipeline:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         logger.info("Fine-tuning job %d — device=%s, dataset=%s", job_id, device, dataset_name)
 
-        tokenizer = AutoTokenizer.from_pretrained(settings.FINBERT_MODEL)
-        model = AutoModelForSequenceClassification.from_pretrained(
-            settings.FINBERT_MODEL, num_labels=3
-        ).to(device)
+        tokenizer = _load_tokenizer(settings.FINBERT_MODEL)
+        model = _load_model(settings.FINBERT_MODEL, num_labels=3).to(device)
+
+        # Overwrite the inherited label map with the canonical one for
+        # *this* dataset so model.config.id2label matches what the
+        # logit indices actually mean after training. Without this
+        # step save_model() would persist the base checkpoint's map
+        # (e.g. FinBERT-tone's {0:Neutral,1:Positive,2:Negative}),
+        # which silently mis-routes every prediction at inference
+        # time. This is the root cause of the poisoned-labels bug
+        # we hit on job 1.
+        dataset_meta = next(
+            (d for d in AVAILABLE_DATASETS if d["name"] == dataset_name), None
+        )
+        canonical = (dataset_meta or {}).get("canonical_labels")
+        if canonical:
+            id2label = {int(k): v for k, v in canonical.items()}
+            label2id = {v: k for k, v in id2label.items()}
+            model.config.id2label = id2label
+            model.config.label2id = label2id
+            logger.info("Set canonical label map for job %d: %s", job_id, id2label)
+        else:
+            logger.warning(
+                "Dataset %s has no canonical_labels — model config will "
+                "inherit the base checkpoint's id2label which is usually wrong",
+                dataset_name,
+            )
 
         raw_dataset = self.download_dataset(dataset_name)
         splits = self.prepare_dataset(raw_dataset, tokenizer)
@@ -169,7 +197,7 @@ class FineTuningPipeline:
             args=training_args,
             train_dataset=splits["train"],
             eval_dataset=splits["validation"],
-            tokenizer=tokenizer,
+            processing_class=tokenizer,
             compute_metrics=_compute_metrics,
             callbacks=callbacks,
         )

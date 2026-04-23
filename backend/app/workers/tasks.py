@@ -429,62 +429,195 @@ def update_correlations_task(self):
         raise self.retry(exc=exc)
 
 
+# ---------------------------------------------------------------------------
+# Vector store indexing — cursor-based.
+#
+# The previous implementation was ``ORDER BY collected_date DESC LIMIT 200``,
+# which meant the same ~200 newest rows got re-embedded every 30 min while
+# the rest of the 300k+ corpus was never indexed (we measured 9.7% coverage
+# after the 5y backfill). The rewrite uses a ``collected_date`` cursor
+# persisted in Redis so each run only processes genuinely new rows and
+# eventual coverage is guaranteed. The paired one-shot CLI
+# ``app.scripts.index_all_articles`` can be used to backfill the historical
+# tail in bulk after this task is deployed.
+# ---------------------------------------------------------------------------
+_INDEXER_CURSOR_KEY = "vector_indexer:article_cursor"
+_INDEXER_SOCIAL_CURSOR_KEY = "vector_indexer:social_cursor"
+# How many articles we pull into a single 30-min recurring run. Larger values
+# catch up faster but embed for longer; 1000 keeps each tick well under a
+# minute on CPU and under ten seconds on GPU.
+_INDEXER_BATCH_SIZE = 1000
+
+
+def _get_redis_sync():
+    """Lazy sync Redis client for cursor storage from inside Celery tasks."""
+    import redis
+
+    from app.config import get_settings
+
+    return redis.Redis.from_url(get_settings().REDIS_URL, decode_responses=True)
+
+
+def _load_tickers_for_articles(session, article_ids: list[str]) -> dict[str, list[str]]:
+    """Return ``{article_id: [TICKER, ...]}`` for the given ids.
+
+    Articles with no junction rows map to an empty list. We preserve
+    ``company_id`` order via ``ORDER BY`` so the "primary" ticker is stable
+    across runs (important — it becomes the filterable ``meta.ticker``).
+    """
+    from app.models import ArticleCompany, Company
+
+    if not article_ids:
+        return {}
+
+    rows = (
+        session.query(ArticleCompany.article_id, Company.ticker_symbol)
+        .join(Company, Company.company_id == ArticleCompany.company_id)
+        .filter(ArticleCompany.article_id.in_(article_ids))
+        .order_by(ArticleCompany.article_id, ArticleCompany.company_id)
+        .all()
+    )
+    mapping: dict[str, list[str]] = {aid: [] for aid in article_ids}
+    for article_id, ticker in rows:
+        if ticker:
+            mapping.setdefault(article_id, []).append(ticker)
+    return mapping
+
+
+def _articles_to_index_payload(articles, tickers_by_id: dict[str, list[str]]) -> list[dict]:
+    return [
+        {
+            "id": a.article_id,
+            "title": a.title,
+            "content": a.content,
+            "source": a.source,
+            "url": a.url,
+            "publication_date": (
+                a.publication_date.strftime("%Y-%m-%d %H:%M:%S")
+                if a.publication_date
+                else ""
+            ),
+            "tickers": tickers_by_id.get(a.article_id, []),
+        }
+        for a in articles
+    ]
+
+
 @celery_app.task(bind=True, max_retries=2, default_retry_delay=60)
-def index_vector_store_task(self):
-    """Index new articles and social sentiment into ChromaDB."""
+def index_vector_store_task(self, batch_size: int | None = None):
+    """Incrementally index new articles + social sentiment into ChromaDB.
+
+    Uses a Redis-backed cursor (``collected_date`` for articles,
+    ``fetched_at`` for social) so each run only processes rows newer than
+    the last successful tick. Upsert semantics mean a re-run with the same
+    cursor is a safe no-op.
+    """
     from app.services.vector_store import VectorStoreService
     from app.models import NewsArticle, SocialSentiment
 
-    logger.info("Indexing vector store")
+    effective_batch = batch_size or _INDEXER_BATCH_SIZE
+    logger.info("Indexing vector store (batch=%d)", effective_batch)
+
     session = SyncSessionLocal()
+    redis_client = _get_redis_sync()
     try:
         vs = VectorStoreService()
 
-        recent_articles = (
-            session.query(NewsArticle)
-            .order_by(NewsArticle.collected_date.desc())
-            .limit(200)
-            .all()
-        )
-        article_dicts = [
-            {
-                "id": a.article_id,
-                "title": a.title,
-                "content": a.content,
-                "source": a.source,
-                "url": a.url,
-                "publication_date": str(a.publication_date) if a.publication_date else "",
-            }
-            for a in recent_articles
-        ]
-        vs.index_articles(article_dicts)
+        # --- Articles ----------------------------------------------------
+        raw_cursor = redis_client.get(_INDEXER_CURSOR_KEY)
+        cursor_dt: datetime | None = None
+        if raw_cursor:
+            try:
+                cursor_dt = datetime.fromisoformat(raw_cursor)
+            except ValueError:
+                logger.warning(
+                    "Corrupt article cursor %r in Redis; starting from scratch",
+                    raw_cursor,
+                )
 
-        recent_social = (
-            session.query(SocialSentiment)
-            .order_by(SocialSentiment.fetched_at.desc())
-            .limit(100)
+        article_q = session.query(NewsArticle)
+        if cursor_dt is not None:
+            article_q = article_q.filter(NewsArticle.collected_date > cursor_dt)
+        new_articles = (
+            article_q.order_by(NewsArticle.collected_date.asc())
+            .limit(effective_batch)
             .all()
         )
-        social_dicts = [
-            {
-                "id": str(s.id),
-                "ticker_symbol": s.ticker_symbol,
-                "buzz_score": float(s.buzz_score) if s.buzz_score else 0,
-                "bullish_ratio": float(s.bullish_ratio) if s.bullish_ratio else 0,
-                "bearish_ratio": float(s.bearish_ratio) if s.bearish_ratio else 0,
-                "post_volume": s.post_volume or 0,
-                "sentiment_trend": s.sentiment_trend or "",
-            }
-            for s in recent_social
-        ]
-        vs.index_social_sentiment(social_dicts)
+
+        articles_indexed = 0
+        if new_articles:
+            tickers_by_id = _load_tickers_for_articles(
+                session, [a.article_id for a in new_articles]
+            )
+            payload = _articles_to_index_payload(new_articles, tickers_by_id)
+            vs.index_articles(payload)
+            articles_indexed = len(payload)
+            # Advance the cursor to the max collected_date in this batch. We
+            # use ``>`` on the next run so if two rows share a timestamp only
+            # one will be indexed — the next invocation will pick up any
+            # stragglers because ``upsert`` is idempotent and future batches
+            # include everything strictly newer.
+            new_cursor = max(
+                (a.collected_date for a in new_articles if a.collected_date),
+                default=None,
+            )
+            if new_cursor is not None:
+                redis_client.set(_INDEXER_CURSOR_KEY, new_cursor.isoformat())
+
+        # --- Social sentiment -------------------------------------------
+        raw_social_cursor = redis_client.get(_INDEXER_SOCIAL_CURSOR_KEY)
+        social_cursor: datetime | None = None
+        if raw_social_cursor:
+            try:
+                social_cursor = datetime.fromisoformat(raw_social_cursor)
+            except ValueError:
+                pass
+
+        social_q = session.query(SocialSentiment)
+        if social_cursor is not None:
+            social_q = social_q.filter(SocialSentiment.fetched_at > social_cursor)
+        new_social = (
+            social_q.order_by(SocialSentiment.fetched_at.asc())
+            .limit(effective_batch)
+            .all()
+        )
+
+        social_indexed = 0
+        if new_social:
+            social_dicts = [
+                {
+                    "id": str(s.id),
+                    "ticker_symbol": s.ticker_symbol,
+                    "buzz_score": float(s.buzz_score) if s.buzz_score else 0,
+                    "bullish_ratio": float(s.bullish_ratio) if s.bullish_ratio else 0,
+                    "bearish_ratio": float(s.bearish_ratio) if s.bearish_ratio else 0,
+                    "post_volume": s.post_volume or 0,
+                    "sentiment_trend": s.sentiment_trend or "",
+                }
+                for s in new_social
+            ]
+            vs.index_social_sentiment(social_dicts)
+            social_indexed = len(social_dicts)
+            new_social_cursor = max(
+                (s.fetched_at for s in new_social if s.fetched_at),
+                default=None,
+            )
+            if new_social_cursor is not None:
+                redis_client.set(
+                    _INDEXER_SOCIAL_CURSOR_KEY, new_social_cursor.isoformat()
+                )
 
         logger.info(
-            "Vector store indexed: %d articles, %d social records",
-            len(article_dicts),
-            len(social_dicts),
+            "Vector store incremental index: %d articles, %d social records "
+            "(article_cursor=%s)",
+            articles_indexed,
+            social_indexed,
+            redis_client.get(_INDEXER_CURSOR_KEY),
         )
-        return {"articles_indexed": len(article_dicts), "social_indexed": len(social_dicts)}
+        return {
+            "articles_indexed": articles_indexed,
+            "social_indexed": social_indexed,
+        }
     except Exception as exc:
         logger.exception("Vector store indexing failed")
         raise self.retry(exc=exc)
@@ -680,3 +813,44 @@ def run_finetuning_task(self, job_id: int):
         raise self.retry(exc=exc)
     finally:
         session.close()
+
+
+@celery_app.task(bind=True, max_retries=0, acks_late=True)
+def run_simulation_task(
+    self,
+    run_id: int,
+    profiles: list[str] | None = None,
+    universe: list[str] | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+):
+    """Execute a backtest trader-agent simulation off the main container.
+
+    We intentionally set ``max_retries=0``: a simulation is long-running
+    and makes many LLM calls, so silently re-queueing on transient error
+    would burn through Groq quota with no observable improvement. The
+    engine itself marks the ``SimulationRun`` row ``failed`` on error,
+    which is what the API / UI surface.
+    """
+    from datetime import date as _date
+    from app.services.simulation.engine import run_simulation
+
+    def _parse_date(s: str | None):
+        if not s:
+            return None
+        return _date.fromisoformat(s)
+
+    logger.info("Starting simulation run %d", run_id)
+    try:
+        result = run_simulation(
+            run_id=run_id,
+            profile_names=profiles,
+            universe_override=universe,
+            start_date=_parse_date(start_date),
+            end_date=_parse_date(end_date),
+        )
+        logger.info("Simulation run %d finished: %s", run_id, result.get("status"))
+        return result
+    except Exception:
+        logger.exception("Simulation run %d failed", run_id)
+        raise

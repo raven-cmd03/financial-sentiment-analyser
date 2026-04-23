@@ -196,16 +196,19 @@ def _load_tokenizer(model_name: str):
     )
 
 
-def _load_model(model_name: str):
+def _load_model(model_name: str, **kwargs):
     """Load a classification model with graceful fallback.
 
     Mirrors ``_load_tokenizer``: some checkpoints on HF ship an
     incomplete ``config.json`` (missing ``model_type``) that breaks
     AutoConfig/AutoModel resolution. For BERT-family finance models we
     can reliably fall back to the concrete Bert class.
+
+    Extra kwargs (e.g. ``num_labels`` used during fine-tuning to re-init
+    the classification head) are forwarded to ``from_pretrained``.
     """
     try:
-        return AutoModelForSequenceClassification.from_pretrained(model_name)
+        return AutoModelForSequenceClassification.from_pretrained(model_name, **kwargs)
     except (ValueError, OSError) as exc:
         logger.info(
             "AutoModel load failed for %s (%s); trying BertForSequenceClassification",
@@ -213,10 +216,15 @@ def _load_model(model_name: str):
             exc.__class__.__name__,
         )
 
-    # Load config via BertConfig (doesn't require model_type).
+    # Load config via BertConfig (doesn't require model_type). Apply
+    # overrides like num_labels to the config so the classification head
+    # is sized correctly.
     config = BertConfig.from_pretrained(model_name)
+    num_labels = kwargs.pop("num_labels", None)
+    if num_labels is not None:
+        config.num_labels = num_labels
     return BertForSequenceClassification.from_pretrained(
-        model_name, config=config
+        model_name, config=config, **kwargs
     )
 
 

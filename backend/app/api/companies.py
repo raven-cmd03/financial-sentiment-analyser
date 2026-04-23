@@ -170,7 +170,15 @@ async def get_sentiment_history(
     return [
         {
             "date": str(row.date),
-            "sentiment_score": round(float(row.avg_positive), 4),
+            # Net sentiment = average positive probability − average negative
+            # probability, in [-1, 1]. Matches the definition used by
+            # /api/trends so downstream consumers (chart tooltip, KPI cards,
+            # correlation service) all speak the same language. Returning
+            # avg_positive alone made "Net score" look positive even when the
+            # red line sat above the green one on the chart.
+            "sentiment_score": round(
+                float(row.avg_positive) - float(row.avg_negative), 4
+            ),
             "positive_ratio": round(float(row.avg_positive), 4),
             "negative_ratio": round(float(row.avg_negative), 4),
             "neutral_ratio": round(float(row.avg_neutral), 4),

@@ -56,6 +56,7 @@ services:
       - ./backend:/app
       - model_data:/app/data/models
       - dataset_data:/app/data/datasets
+      - simulation_data:/app/data/simulations
     depends_on:
       postgres:
         condition: service_healthy
@@ -96,6 +97,7 @@ services:
       - ./backend:/app
       - model_data:/app/data/models
       - dataset_data:/app/data/datasets
+      - simulation_data:/app/data/simulations
     depends_on:
       postgres:
         condition: service_healthy
@@ -164,3 +166,4 @@ volumes:
   chroma_data:
   model_data:
   dataset_data:
+  simulation_data:

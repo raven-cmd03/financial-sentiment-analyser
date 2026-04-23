@@ -7,9 +7,16 @@ from app.models.trend import Trend
 from app.models.social_sentiment import SocialSentiment
 from app.models.chat import ChatSession, ChatMessage
 from app.models.finetuning import FinetuningJob
+from app.models.simulation import (
+    SimulationRun,
+    TraderAgent,
+    SimulationTrade,
+    AgentDailySnapshot,
+)
 
 __all__ = [
     "Company", "NewsArticle", "ArticleCompany", "SentimentResult",
     "MarketData", "Correlation", "Trend", "SocialSentiment",
     "ChatSession", "ChatMessage", "FinetuningJob",
+    "SimulationRun", "TraderAgent", "SimulationTrade", "AgentDailySnapshot",
 ]

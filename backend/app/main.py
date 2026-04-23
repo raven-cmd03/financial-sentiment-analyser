@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import redis.asyncio as redis
 
 from app.config import get_settings
-from app.api import companies, news, trends, correlations, social_sentiment, chat, finetuning, websocket
+from app.api import companies, news, trends, correlations, social_sentiment, chat, finetuning, simulations, websocket
 
 settings = get_settings()
 
@@ -43,9 +43,26 @@ app.include_router(correlations.router, prefix="/api/correlations", tags=["Corre
 app.include_router(social_sentiment.router, prefix="/api/social", tags=["Social Sentiment"])
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 app.include_router(finetuning.router, prefix="/api/finetuning", tags=["Fine-tuning"])
+app.include_router(simulations.router, prefix="/api/simulations", tags=["Simulations"])
 app.include_router(websocket.router, prefix="/api", tags=["WebSocket"])
 
 
 @app.get("/api/health")
 async def health_check():
     return {"status": "healthy", "service": settings.APP_NAME}
+
+
+@app.get("/api/status")
+async def status():
+    """Lightweight metadata about the running backend.
+
+    The chat UI renders ``groq_model`` in its model badge so the label
+    always matches whatever ``GROQ_MODEL`` is actually configured, rather
+    than a hardcoded string that silently drifts when the env var changes.
+    """
+    return {
+        "service": settings.APP_NAME,
+        "groq_model": settings.GROQ_MODEL,
+        "finbert_model": settings.FINBERT_MODEL,
+        "embedding_model": settings.EMBEDDING_MODEL,
+    }

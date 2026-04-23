@@ -64,6 +64,8 @@ function SentimentTooltip({
 }) {
   if (!active || !payload?.length) return null;
   const articles = payload.find((p) => p.name === "articles")?.value;
+  const positive = payload.find((p) => p.name === "positive")?.value;
+  const negative = payload.find((p) => p.name === "negative")?.value;
 
   const rows = payload
     .filter((p) => p.name !== "articles" && p.name !== "score")
@@ -73,13 +75,18 @@ function SentimentTooltip({
       color: p.color,
     }));
 
-  const score = payload.find((p) => p.name === "score")?.value;
-
-  if (score !== undefined) {
+  // Derive Net score from the positive/negative values the user actually
+  // sees on the chart rather than trusting the backend's ``score`` field.
+  // If positive > negative, the green line sits above the red one and net
+  // must be > 0; and vice versa. This keeps the tooltip self-consistent
+  // even if an upstream aggregation returns something unexpected.
+  if (positive !== undefined && negative !== undefined) {
+    const net = positive - negative;
     rows.unshift({
       label: "Net score",
-      value: `${score >= 0 ? "+" : ""}${(score * 100).toFixed(1)}`,
-      color: "hsl(var(--primary))",
+      value: `${net >= 0 ? "+" : ""}${(net * 100).toFixed(1)}`,
+      color:
+        net >= 0 ? "hsl(var(--positive))" : "hsl(var(--negative))",
     });
   }
 

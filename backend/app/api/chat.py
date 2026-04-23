@@ -95,17 +95,31 @@ async def send_message(
     rag = RAGChatService()
 
     async def event_generator():
+        # Commit policy: we want the user message (persisted upfront by
+        # ``rag.chat`` before streaming begins) and any successfully
+        # accumulated assistant tokens to survive a mid-stream client
+        # disconnect. Wrapping the commit in ``finally`` means even a
+        # ``GeneratorExit``/``CancelledError`` raised by a dropped SSE
+        # connection still flushes the work — otherwise the session's
+        # user message silently disappears on rollback and the next
+        # turn's history looks broken. The error path rolls back first
+        # (so the ``finally`` commit becomes a cheap no-op) and emits an
+        # ``error`` event for the UI.
+        did_rollback = False
         try:
             async for event in rag.chat(session_id, body.content, db):
-                # Each event is a dict like {"token": "..."} or {"citations": [...]};
-                # clients parse `evt.data` as JSON.
+                # Each event is a dict like {"token": "..."} or
+                # {"citations": [...]}; clients parse ``evt.data`` as
+                # JSON.
                 yield {"data": json.dumps(event)}
-            await db.commit()
             yield {"data": "[DONE]"}
         except Exception:
-            logger.exception("Error streaming chat response for session %d", session_id)
+            logger.exception(
+                "Error streaming chat response for session %d", session_id
+            )
             try:
                 await db.rollback()
+                did_rollback = True
             except Exception:
                 pass
             yield {
@@ -114,6 +128,15 @@ async def send_message(
                     {"error": "An error occurred while generating the response."}
                 ),
             }
+        finally:
+            if not did_rollback:
+                try:
+                    await db.commit()
+                except Exception:
+                    logger.exception(
+                        "Failed to commit chat session %d after stream",
+                        session_id,
+                    )
 
     return EventSourceResponse(event_generator())
 

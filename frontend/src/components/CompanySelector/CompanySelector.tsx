@@ -35,8 +35,8 @@ export default function CompanySelector() {
   }, [filtered]);
 
   return (
-    <Card className="overflow-hidden">
-      <CardHeader className="space-y-3 p-4">
+    <Card className="flex h-full min-h-0 flex-col overflow-hidden">
+      <CardHeader className="shrink-0 space-y-3 p-4">
         <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           Companies
         </CardTitle>
@@ -52,8 +52,8 @@ export default function CompanySelector() {
           />
         </div>
       </CardHeader>
-      <CardContent className="p-0">
-        <ScrollArea className="h-[520px]">
+      <CardContent className="min-h-0 flex-1 p-0">
+        <ScrollArea className="h-full">
           <div className="px-2 pb-3">
             {companiesLoading ? (
               <div className="space-y-2 px-2 py-2">

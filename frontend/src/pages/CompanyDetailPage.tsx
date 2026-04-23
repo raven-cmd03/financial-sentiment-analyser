@@ -7,7 +7,6 @@ import {
   Minus,
   ExternalLink,
   Newspaper,
-  MessageSquare,
   Activity,
 } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
@@ -24,6 +23,7 @@ import EmptyState from "@/components/common/EmptyState";
 import SentimentChart from "@/components/SentimentChart/SentimentChart";
 import PriceChart from "@/components/PriceChart/PriceChart";
 import CorrelationTable from "@/components/CorrelationTable/CorrelationTable";
+import SocialSentimentCard from "@/components/SocialSentiment/SocialSentimentCard";
 import {
   Card,
   CardContent,
@@ -33,7 +33,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
-import type { SocialSentiment as SocialSentimentType } from "@/types";
 
 function TrendIcon({ trend, className }: { trend: string; className?: string }) {
   const cls = className ?? "h-4 w-4";
@@ -86,43 +85,6 @@ function HeroKpi({ label, value, sublabel, tone = "accent", icon }: HeroKpiProps
         {sublabel && (
           <p className="text-[11px] text-muted-foreground">{sublabel}</p>
         )}
-      </div>
-    </div>
-  );
-}
-
-function SocialCard({ item }: { item: SocialSentimentType }) {
-  const bullish = item.bullish_ratio ?? 0;
-  const bearish = item.bearish_ratio ?? 0;
-  const label: "positive" | "negative" | "neutral" =
-    bullish > bearish + 0.1
-      ? "positive"
-      : bearish > bullish + 0.1
-        ? "negative"
-        : "neutral";
-  const confidence = Math.max(bullish, bearish);
-  return (
-    <div className="rounded-md border border-border bg-background px-4 py-3">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm font-medium text-foreground">X / Social</p>
-          <p className="text-xs text-muted-foreground">
-            {item.post_volume ?? 0} posts · buzz{" "}
-            {(item.buzz_score ?? 0).toFixed(1)}
-          </p>
-        </div>
-        <SentimentBadge label={label} confidence={confidence} />
-      </div>
-      <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-muted">
-        <div
-          className="h-full bg-positive"
-          style={{ width: `${(bullish * 100).toFixed(0)}%` }}
-          aria-hidden="true"
-        />
-      </div>
-      <div className="mt-2 flex justify-between text-xs text-muted-foreground">
-        <span>Bullish {(bullish * 100).toFixed(0)}%</span>
-        <span>Bearish {(bearish * 100).toFixed(0)}%</span>
       </div>
     </div>
   );
@@ -249,26 +211,10 @@ export default function CompanyDetailPage() {
             </div>
 
             <aside className="flex flex-col gap-6">
-              <Card>
-                <CardHeader className="flex-row items-center gap-2 space-y-0 pb-3">
-                  <MessageSquare
-                    className="h-4 w-4 text-primary"
-                    aria-hidden="true"
-                  />
-                  <CardTitle className="text-sm">Social sentiment</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {socialData ? (
-                    <SocialCard item={socialData} />
-                  ) : (
-                    <EmptyState
-                      icon={MessageSquare}
-                      title="No social data yet"
-                      description="Social metrics haven't been collected for this ticker."
-                    />
-                  )}
-                </CardContent>
-              </Card>
+              <SocialSentimentCard
+                ticker={safeTicker}
+                preloaded={socialData}
+              />
 
               <Card>
                 <CardHeader className="flex-row items-center gap-2 space-y-0 pb-3">

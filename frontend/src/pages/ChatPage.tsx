@@ -8,6 +8,7 @@ import {
   sendChatMessageUrl,
   deleteChatSession,
   getApiKey,
+  getBackendStatus,
   isLockedError,
 } from "@/api/client";
 import SessionList from "@/components/Chat/SessionList";
@@ -20,6 +21,14 @@ import LockedStateCard from "@/components/common/LockedStateCard";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 
+function prettifyModelName(raw: string | null): string {
+  if (!raw) return "Groq";
+  // "llama-3.3-70b-versatile" → "Llama-3.3 70B"
+  const match = raw.match(/^llama-(\d+(?:\.\d+)?)-(\d+)b/i);
+  if (match) return `Llama-${match[1]} ${match[2]}B`;
+  return raw;
+}
+
 export default function ChatPage() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeId, setActiveId] = useState<string | number | null>(null);
@@ -27,7 +36,16 @@ export default function ChatPage() {
   const [streaming, setStreaming] = useState(false);
   const [locked, setLocked] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [modelName, setModelName] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    // Fire-and-forget; badge falls back to a generic label if this fails,
+    // so we don't surface the error to the user.
+    getBackendStatus()
+      .then((s) => setModelName(s.groq_model))
+      .catch(() => setModelName(null));
+  }, []);
 
   const loadSessions = useCallback(async () => {
     try {
@@ -316,12 +334,13 @@ export default function ChatPage() {
             <Badge
               variant="outline"
               className="hidden gap-1.5 font-mono text-[10px] text-muted-foreground sm:inline-flex"
+              title={modelName ?? undefined}
             >
               <span
                 className="h-1.5 w-1.5 rounded-full bg-positive"
                 aria-hidden="true"
               />
-              Groq · Llama-3.3 70B
+              {`Groq · ${prettifyModelName(modelName)}`}
             </Badge>
           </header>
 
@@ -368,7 +387,15 @@ function normalizeCitations(
           : "Source";
     const source = typeof c.source === "string" ? (c.source as string) : "unknown";
     const url = typeof c.url === "string" ? (c.url as string) : undefined;
-    normalized.push({ title, source, url });
+    const publicationDate =
+      typeof c.publication_date === "string" && c.publication_date.length > 0
+        ? (c.publication_date as string)
+        : undefined;
+    const ticker =
+      typeof c.ticker === "string" && c.ticker.length > 0
+        ? (c.ticker as string)
+        : undefined;
+    normalized.push({ title, source, url, publicationDate, ticker });
   }
   return normalized.length > 0 ? normalized : undefined;
 }

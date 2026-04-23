@@ -95,6 +95,20 @@ export function isLockedError(err: unknown): err is ApiLockedError {
   return err instanceof ApiLockedError;
 }
 
+// ── Status ─────────────────────────────────────────────────
+
+export interface BackendStatus {
+  service: string;
+  groq_model: string;
+  finbert_model: string;
+  embedding_model: string;
+}
+
+export async function getBackendStatus(): Promise<BackendStatus> {
+  const { data } = await api.get<BackendStatus>("/status");
+  return data;
+}
+
 // ── Companies ──────────────────────────────────────────────
 
 export async function getCompanies(): Promise<Company[]> {

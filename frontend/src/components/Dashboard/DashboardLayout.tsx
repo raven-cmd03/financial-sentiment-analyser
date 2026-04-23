@@ -27,7 +27,7 @@ export default function DashboardLayout({
     >
       {sidebar && (
         <aside className="hidden w-[280px] shrink-0 lg:block">
-          <div className="sticky top-20 flex max-h-[calc(100vh-6rem)] flex-col gap-4 overflow-y-auto">
+          <div className="sticky top-20 flex h-[calc(100vh-6rem)] flex-col gap-4">
             {sidebar}
           </div>
         </aside>
@@ -37,7 +37,7 @@ export default function DashboardLayout({
 
       {aside && (
         <aside className="hidden w-[320px] shrink-0 xl:block">
-          <div className="sticky top-20 flex max-h-[calc(100vh-6rem)] flex-col gap-4 overflow-y-auto">
+          <div className="sticky top-20 flex h-[calc(100vh-6rem)] flex-col gap-4">
             {aside}
           </div>
         </aside>

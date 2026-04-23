@@ -14,6 +14,7 @@ import CompanySelector from "@/components/CompanySelector/CompanySelector";
 import SentimentChart from "@/components/SentimentChart/SentimentChart";
 import CorrelationTable from "@/components/CorrelationTable/CorrelationTable";
 import KpiCard from "@/components/Dashboard/KpiCard";
+import SocialSentimentCard from "@/components/SocialSentiment/SocialSentimentCard";
 import EmptyState from "@/components/common/EmptyState";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -165,7 +166,12 @@ function DashboardMain() {
       <KpiStrip />
 
       {selectedCompany ? (
+        // Single-column stack so the social snapshot is ALWAYS visible with
+        // the chart — a right-rail layout pushes the card off-screen on any
+        // viewport narrower than the max-width of the shell, which defeats
+        // the point of surfacing live social signal on the dashboard.
         <div className="flex flex-col gap-5">
+          <SocialSentimentCard ticker={selectedCompany} />
           <SentimentChart ticker={selectedCompany} />
           <CorrelationTable ticker={selectedCompany} />
         </div>
