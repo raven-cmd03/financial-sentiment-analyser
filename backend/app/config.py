@@ -20,6 +20,16 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = "llama-3.3-70b-versatile"
 
+    # Fireworks AI — used as an alternative LLM provider, primarily for the
+    # trader-agent simulation (see ``SIMULATION_LLM_PROVIDER``). Free Groq
+    # tier tokens-per-day will not sustain a multi-year backtest but
+    # Fireworks gives pay-as-you-go access to the same calibre models.
+    FIREWORKS_API_KEY: str = ""
+    # Default to Llama 3.3 70B Instruct since it's the closest peer to the
+    # Groq model we use elsewhere and has reliable tool-calling (required
+    # by ``ChatFireworks.with_structured_output``).
+    FIREWORKS_MODEL: str = "accounts/fireworks/models/llama-v3p3-70b-instruct"
+
     # Adanos X Sentiment
     ADANOS_API_KEY: str = ""
 
@@ -78,6 +88,26 @@ class Settings(BaseSettings):
     # ~30 RPM on llama-3.3-70b-versatile so 25 leaves some headroom.
     SIMULATION_OUTPUT_DIR: str = "/app/data/simulations"
     SIMULATION_GROQ_RPM: int = 25
+    # LLM provider used by the trader agents + the end-of-run narrative.
+    # "groq" (default) reuses GROQ_API_KEY + GROQ_MODEL. "fireworks" uses
+    # FIREWORKS_API_KEY + FIREWORKS_MODEL — recommended when running multi-
+    # year backtests because Fireworks has a pay-as-you-go tier without
+    # the Groq free-tier tokens-per-day cap.
+    SIMULATION_LLM_PROVIDER: str = "groq"
+    # Per-LLM-call timeout in seconds. Both Fireworks and Groq have
+    # occasional slow/hung responses; without a client-side timeout the
+    # underlying openai python client can block for 10 minutes before
+    # giving up, stalling the whole run. We keep it tight and let the
+    # built-in retry take care of real flakiness.
+    SIMULATION_LLM_TIMEOUT_SEC: float = 45.0
+    # Number of retries per LLM call before surrendering (agent returns
+    # empty order list = hold today).
+    SIMULATION_LLM_MAX_RETRIES: int = 3
+    # Progress-snapshot cadence. Every N seconds of wall-clock time the
+    # engine writes a markdown + JSON leaderboard to
+    # SIMULATION_OUTPUT_DIR/<run_id>/progress/ so you can follow a long
+    # run without waiting for the final report. Set <= 0 to disable.
+    SIMULATION_PROGRESS_INTERVAL_SEC: float = 600.0
     # Dollars each agent starts with. Kept identical for treatment + control
     # so the head-to-head is an apples-to-apples comparison.
     SIMULATION_STARTING_CASH: float = 1000.0

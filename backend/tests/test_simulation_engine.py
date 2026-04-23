@@ -310,6 +310,59 @@ def test_end_to_end_simulation(tmp_path, seeded_session, monkeypatch):
         assert float(s.cash) >= 0
 
 
+def test_progress_snapshots_are_written(tmp_path, seeded_session, monkeypatch):
+    """With a tiny progress interval, each day's loop iteration should
+    fire a progress snapshot — we should end with >=1 snapshot file
+    on disk and the latest.md/latest.json convenience copies."""
+    session, run_id, trading_days = seeded_session
+
+    monkeypatch.setenv("SIMULATION_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setenv("SIMULATION_GROQ_RPM", "100000")
+    monkeypatch.setenv("SIMULATION_PROGRESS_INTERVAL_SEC", "0.0001")
+    from app.config import get_settings
+
+    get_settings.cache_clear()  # type: ignore[attr-defined]
+    settings = get_settings()
+    assert settings.SIMULATION_PROGRESS_INTERVAL_SEC <= 0.001
+
+    from app.services.simulation.engine import run_simulation
+
+    def factory(prof: TraderProfile, variant: str) -> _RecordingAgent:
+        strategy = _treatment_strategy if variant == "treatment" else _control_strategy
+        return _RecordingAgent(prof, variant, strategy)
+
+    result = run_simulation(
+        run_id=run_id,
+        profile_names=["day_trader"],
+        universe_override=["AAPL", "MSFT"],
+        agent_factory=factory,
+        session=session,
+        report_writer=None,
+    )
+
+    assert result["status"] == "completed"
+    progress_dir = tmp_path / str(run_id) / "progress"
+    assert progress_dir.exists(), "progress directory was not created"
+
+    snap_md = sorted(progress_dir.glob("snapshot_*.md"))
+    snap_json = sorted(progress_dir.glob("snapshot_*.json"))
+    assert snap_md, "no progress snapshot markdown written"
+    assert len(snap_md) == len(snap_json)
+
+    assert (progress_dir / "latest.md").exists()
+    assert (progress_dir / "latest.json").exists()
+
+    import json as _json
+
+    payload = _json.loads((progress_dir / "latest.json").read_text())
+    assert payload["run_id"] == run_id
+    assert payload["total_days"] == len(trading_days)
+    assert 0.0 <= payload["progress_pct"] <= 100.0
+    assert payload["leaderboard"], "leaderboard should have at least one row"
+    for row in payload["leaderboard"]:
+        assert {"profile", "variant", "equity", "return_pct", "trade_count"} <= row.keys()
+
+
 def test_apply_orders_basic_accounting():
     from app.services.simulation.portfolio import Portfolio, apply_orders
 

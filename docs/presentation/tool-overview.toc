@@ -1,0 +1,6 @@
+\beamer@sectionintoc {1}{Purpose and capabilities}{3}{0}{1}
+\beamer@sectionintoc {2}{System architecture}{5}{0}{2}
+\beamer@sectionintoc {3}{Sentiment pipeline}{7}{0}{3}
+\beamer@sectionintoc {4}{Simulation and evaluation}{10}{0}{4}
+\beamer@sectionintoc {5}{Initial backtest snapshot (run 4)}{14}{0}{5}
+\beamer@sectionintoc {6}{Operations and stack}{17}{0}{6}

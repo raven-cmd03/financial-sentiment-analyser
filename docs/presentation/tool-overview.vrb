@@ -1,0 +1,8 @@
+\frametitle{Structured trade orders}
+\begin{lstlisting}[language=Python]
+# app/services/simulation/agent.py - Pydantic-enforced output
+class OrderList(BaseModel):
+    orders: list[StructuredOrder] = Field(default_factory=list)
+
+# LLM returns buy/sell, size_pct in [0,1], reasoning; engine applies clamps.
+\end{lstlisting}

@@ -24,6 +24,8 @@ env/
 # --- Data / models (keep out of git; mount as volumes instead) ---
 backend/data/models/
 backend/data/datasets/
+# Simulation artefacts (bind-mounted from docker-compose → ./data/simulations)
+data/simulations/
 *.pt
 *.bin
 *.safetensors

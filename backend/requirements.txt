@@ -35,6 +35,9 @@ langchain>=0.1.12
 langchain-core>=0.1.30
 langchain-community>=0.0.28
 langchain-groq>=0.1.3
+# Fireworks AI — alternative LLM provider used by the trader-agent
+# simulation when SIMULATION_LLM_PROVIDER=fireworks.
+langchain-fireworks>=0.2.0
 
 # Data processing
 pandas>=2.2.0

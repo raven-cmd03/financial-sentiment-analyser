@@ -7,6 +7,7 @@ All artefacts are written to ``SIMULATION_OUTPUT_DIR/<run_id>/``:
 - ``per_profile/<profile>.md``   — head-to-head report per profile
 - ``per_trader/<profile>_<variant>.md`` + .json — full trader log
 - ``briefing_samples.md``        — paired treatment/control briefings for audit
+- ``progress/snapshot_<N>.md``   — periodic leaderboard (cadence: ``SIMULATION_PROGRESS_INTERVAL_SEC``)
 """
 
 from __future__ import annotations
@@ -68,6 +69,188 @@ def _run_dir(run_id: int, base: str) -> Path:
     (path / "per_profile").mkdir(exist_ok=True)
     (path / "per_trader").mkdir(exist_ok=True)
     return path
+
+
+def _fmt_elapsed(seconds: float) -> str:
+    """Render seconds as 'Hh Mm Ss'."""
+    seconds = max(0, int(seconds))
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours}h {minutes}m {secs}s"
+    if minutes:
+        return f"{minutes}m {secs}s"
+    return f"{secs}s"
+
+
+def write_progress_snapshot(
+    *,
+    run_id: int,
+    snapshot_number: int,
+    elapsed_seconds: float,
+    day_index: int,
+    total_days: int,
+    current_day: date_cls,
+    agent_state: list[dict],
+    output_base: str,
+) -> Path:
+    """Write a mid-run progress snapshot for a long-running simulation.
+
+    Called by the engine every ``SIMULATION_PROGRESS_INTERVAL_SEC`` seconds.
+    Never raises: a broken snapshot can't be allowed to tank the run.
+
+    Artefacts land under ``<output_base>/<run_id>/progress/``:
+      - ``snapshot_<N>.md``   — leaderboard + head-to-head summary
+      - ``snapshot_<N>.json`` — same data, machine-readable
+      - ``latest.md`` / ``latest.json`` — copy of the most recent snapshot
+        so tailing "the latest" is a stable filename
+
+    ``agent_state`` items are dicts with keys:
+      profile, variant, cash, equity, trade_count, starting_cash
+    """
+    try:
+        run_dir = Path(output_base) / str(run_id) / "progress"
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+        progress_pct = (
+            100.0 * (day_index + 1) / total_days if total_days > 0 else 0.0
+        )
+        # Extrapolate remaining wall time assuming constant per-day cost.
+        completed = day_index + 1
+        if completed > 0:
+            per_day = elapsed_seconds / completed
+            eta_seconds = per_day * max(0, total_days - completed)
+        else:
+            eta_seconds = 0.0
+
+        # ---------- build leaderboard (sorted by return %) ----------
+        rows = []
+        for a in agent_state:
+            start_cash = a["starting_cash"] or 0.0
+            ret_pct = (
+                (a["equity"] - start_cash) / start_cash * 100.0
+                if start_cash
+                else 0.0
+            )
+            rows.append(
+                {
+                    "profile": a["profile"],
+                    "variant": a["variant"],
+                    "cash": a["cash"],
+                    "equity": a["equity"],
+                    "return_pct": ret_pct,
+                    "trade_count": a["trade_count"],
+                }
+            )
+        rows.sort(key=lambda r: r["return_pct"], reverse=True)
+
+        # ---------- build head-to-head treatment vs control ----------
+        # Index by (profile, variant) so we can pair them up per profile.
+        by_key = {(r["profile"], r["variant"]): r for r in rows}
+        pair_rows = []
+        profiles_seen = sorted({r["profile"] for r in rows})
+        for prof in profiles_seen:
+            t = by_key.get((prof, "treatment"))
+            c = by_key.get((prof, "control"))
+            if not t or not c:
+                continue
+            pair_rows.append(
+                {
+                    "profile": prof,
+                    "treatment_return_pct": t["return_pct"],
+                    "control_return_pct": c["return_pct"],
+                    "lift_pct": t["return_pct"] - c["return_pct"],
+                    "treatment_trades": t["trade_count"],
+                    "control_trades": c["trade_count"],
+                }
+            )
+
+        # ---------- markdown ----------
+        md_lines = [
+            f"# Simulation run {run_id} — progress snapshot #{snapshot_number}",
+            "",
+            f"- Wall-clock elapsed: **{_fmt_elapsed(elapsed_seconds)}**",
+            f"- ETA remaining: ~{_fmt_elapsed(eta_seconds)}",
+            (
+                f"- Progress: day **{day_index + 1} / {total_days}** "
+                f"({progress_pct:.1f}%)"
+            ),
+            f"- Latest simulated day: **{current_day.isoformat()}**",
+            "",
+            "## Leaderboard (by return %)",
+            "",
+            "| Rank | Profile | Variant | Equity | Return % | Trades |",
+            "| --- | --- | --- | --- | --- | --- |",
+        ]
+        for rank, r in enumerate(rows, start=1):
+            md_lines.append(
+                "| {rk} | {p} | {v} | {eq} | {ret} | {tc} |".format(
+                    rk=rank,
+                    p=r["profile"],
+                    v=r["variant"],
+                    eq=_money(r["equity"]),
+                    ret=_fmt_pct(r["return_pct"]),
+                    tc=r["trade_count"],
+                )
+            )
+
+        if pair_rows:
+            md_lines.extend(
+                [
+                    "",
+                    "## Head-to-head (treatment − control)",
+                    "",
+                    "| Profile | Treatment | Control | Lift | T trades | C trades |",
+                    "| --- | --- | --- | --- | --- | --- |",
+                ]
+            )
+            for p in pair_rows:
+                md_lines.append(
+                    "| {pf} | {tr} | {cr} | {lf} | {tt} | {ct} |".format(
+                        pf=p["profile"],
+                        tr=_fmt_pct(p["treatment_return_pct"]),
+                        cr=_fmt_pct(p["control_return_pct"]),
+                        lf=_fmt_pct(p["lift_pct"]),
+                        tt=p["treatment_trades"],
+                        ct=p["control_trades"],
+                    )
+                )
+
+        md_text = "\n".join(md_lines)
+        md_path = run_dir / f"snapshot_{snapshot_number:04d}.md"
+        md_path.write_text(md_text, encoding="utf-8")
+        (run_dir / "latest.md").write_text(md_text, encoding="utf-8")
+
+        # ---------- json ----------
+        payload = {
+            "run_id": run_id,
+            "snapshot_number": snapshot_number,
+            "elapsed_seconds": round(elapsed_seconds, 1),
+            "eta_seconds": round(eta_seconds, 1),
+            "progress_pct": round(progress_pct, 2),
+            "day_index": day_index,
+            "total_days": total_days,
+            "current_day": current_day.isoformat(),
+            "leaderboard": rows,
+            "pairs": pair_rows,
+        }
+        json_path = run_dir / f"snapshot_{snapshot_number:04d}.json"
+        json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        (run_dir / "latest.json").write_text(
+            json.dumps(payload, indent=2), encoding="utf-8"
+        )
+
+        logger.info(
+            "Wrote progress snapshot #%d (%s%% complete) to %s",
+            snapshot_number,
+            f"{progress_pct:.1f}",
+            md_path,
+        )
+        return md_path
+    except Exception:  # pylint: disable=broad-except
+        # Never let a reporting hiccup kill the actual simulation run.
+        logger.exception("Progress snapshot #%d failed to write", snapshot_number)
+        return Path("")
 
 
 def _write_per_trader(
@@ -247,19 +430,23 @@ def _write_per_profile(
 
 
 def _generate_narrative(pairs: list[PairMetrics], settings) -> str:
-    """Ask Groq for a plain-language summary. Returns fallback on error."""
-    if not settings.GROQ_API_KEY:
-        return "_(Groq narrative skipped — no GROQ_API_KEY configured.)_"
+    """Ask the configured simulation LLM for a plain-language summary.
+
+    Falls back to a stub message on any error rather than aborting the
+    whole report — the structured leaderboard + per-profile files have
+    already been written by this point.
+    """
+    from app.services.simulation.llm_provider import (
+        describe_provider,
+        get_simulation_llm,
+    )
 
     try:
-        from langchain_groq import ChatGroq
+        llm = get_simulation_llm(temperature=0.3, streaming=False)
+    except RuntimeError as exc:
+        return f"_(Narrative skipped — {exc})_"
 
-        llm = ChatGroq(
-            model=settings.GROQ_MODEL,
-            api_key=settings.GROQ_API_KEY,
-            temperature=0.3,
-            streaming=False,
-        )
+    try:
         pair_rows = []
         for p in pairs:
             pair_rows.append(
@@ -308,10 +495,10 @@ def _generate_narrative(pairs: list[PairMetrics], settings) -> str:
             ]
         )
         text = getattr(result, "content", None) or str(result)
-        return text.strip()
+        return f"_(LLM: {describe_provider()})_\n\n{text.strip()}"
     except Exception as exc:
-        logger.warning("Groq narrative generation failed: %s", exc)
-        return "_(Groq narrative failed to generate; see logs.)_"
+        logger.warning("Simulation narrative generation failed: %s", exc)
+        return "_(Narrative failed to generate; see logs.)_"
 
 
 def _write_briefing_samples(

@@ -88,22 +88,19 @@ class RateLimiter:
 def _default_agent_factory(
     profile: TraderProfile, variant: str
 ) -> TraderAgent:
-    """Production agent factory: wraps ChatGroq in a TraderAgent."""
-    from langchain_groq import ChatGroq
-
-    settings = get_settings()
-    if not settings.GROQ_API_KEY:
-        raise RuntimeError(
-            "GROQ_API_KEY is not configured; cannot run a live simulation. "
-            "Either set the env var or inject an agent_factory (e.g. in tests)."
-        )
-    llm = ChatGroq(
-        model=settings.GROQ_MODEL,
-        api_key=settings.GROQ_API_KEY,
-        temperature=0.2,
-        streaming=False,
+    """Production agent factory: wraps the configured provider LLM."""
+    from app.services.simulation.llm_provider import (
+        get_simulation_llm,
+        get_structured_method,
     )
-    return TraderAgent(profile=profile, variant=variant, llm=llm)
+
+    llm = get_simulation_llm(temperature=0.2, streaming=False)
+    return TraderAgent(
+        profile=profile,
+        variant=variant,
+        llm=llm,
+        structured_method=get_structured_method(),
+    )
 
 
 def _resolve_universe(
@@ -151,7 +148,15 @@ def _resolve_date_range(
 ) -> tuple[date_cls | None, date_cls | None]:
     """Bound the simulation to dates where we have prices for at least
     one ticker in the universe and, for the start, at least one
-    sentiment row exists on or before it.
+    sentiment-scored news article exists at-or-before that date.
+
+    IMPORTANT: the start bound uses ``news_articles.publication_date`` of
+    articles that have a sentiment result — NOT
+    ``sentiment_results.analyzed_date``, which is when FinBERT processed
+    the article (often just "now" from a big batch job) and has nothing
+    to do with the historical point-in-time availability of the signal.
+    Using ``analyzed_date`` was a bug that compressed the window to just
+    a few days.
     """
     if not universe:
         return None, None
@@ -171,15 +176,31 @@ def _resolve_date_range(
     if not earliest_price or not latest_price:
         return None, None
 
-    earliest_sent = (
-        session.query(SentimentResult.analyzed_date)
-        .order_by(SentimentResult.analyzed_date.asc())
+    from app.models import ArticleCompany, NewsArticle
+
+    # Earliest sentiment-scored publication date for any ticker in the
+    # universe. Joins ensure we only consider articles we actually
+    # scored and that map to a company in the universe.
+    earliest_sent_pub = (
+        session.query(NewsArticle.publication_date)
+        .join(ArticleCompany, ArticleCompany.article_id == NewsArticle.article_id)
+        .join(Company, Company.company_id == ArticleCompany.company_id)
+        .join(
+            SentimentResult,
+            SentimentResult.article_id == NewsArticle.article_id,
+        )
+        .filter(Company.ticker_symbol.in_(universe))
+        .order_by(NewsArticle.publication_date.asc())
         .first()
     )
 
     start = earliest_price[0]
-    if earliest_sent and earliest_sent[0]:
-        sent_date = earliest_sent[0].date() if hasattr(earliest_sent[0], "date") else earliest_sent[0]
+    if earliest_sent_pub and earliest_sent_pub[0]:
+        sent_date = (
+            earliest_sent_pub[0].date()
+            if hasattr(earliest_sent_pub[0], "date")
+            else earliest_sent_pub[0]
+        )
         if sent_date > start:
             start = sent_date
     end = latest_price[0]
@@ -332,6 +353,11 @@ def run_simulation(
             "starting_cash": starting_cash,
             "groq_model": settings.GROQ_MODEL,
             "rpm": settings.SIMULATION_GROQ_RPM,
+            "llm_provider": settings.SIMULATION_LLM_PROVIDER,
+            "fireworks_model": settings.FIREWORKS_MODEL,
+            "progress_interval_sec": settings.SIMULATION_PROGRESS_INTERVAL_SEC,
+            "llm_timeout_sec": settings.SIMULATION_LLM_TIMEOUT_SEC,
+            "llm_max_retries": settings.SIMULATION_LLM_MAX_RETRIES,
         }
         session.flush()
 
@@ -360,6 +386,16 @@ def run_simulation(
         }
 
         universe_set = set(universe)
+
+        # Progress snapshots: tick every SIMULATION_PROGRESS_INTERVAL_SEC
+        # wall-clock seconds so operators can watch a long run without
+        # tailing the celery log. Disabled if the interval is <= 0.
+        progress_interval = max(0.0, float(settings.SIMULATION_PROGRESS_INTERVAL_SEC))
+        run_started_at = time.monotonic()
+        next_progress_at = (
+            run_started_at + progress_interval if progress_interval > 0 else None
+        )
+        progress_counter = 0
 
         # ``i`` indexes ``trading_days``. The briefing uses data <= D-1 and
         # orders fill on D's open. So we start from i = 1, and each agent's
@@ -453,8 +489,10 @@ def run_simulation(
                         trade_counts[(prof_name, variant)] += 1
 
             # ------------- end-of-day snapshot for every agent -------------
+            eod_equity_by_key: dict[tuple[str, str], float] = {}
             for key, portfolio in agent_portfolios.items():
                 equity = portfolio.equity(eod_prices)
+                eod_equity_by_key[key] = equity
                 equity_curves[key].append(equity)
                 agent_row = agent_rows[key]
                 snap = AgentDailySnapshot(
@@ -467,6 +505,47 @@ def run_simulation(
                 session.merge(snap)
 
             session.flush()
+
+            # ------------- periodic progress snapshot -------------
+            if next_progress_at is not None:
+                now_mono = time.monotonic()
+                if now_mono >= next_progress_at:
+                    progress_counter += 1
+                    try:
+                        from app.services.simulation.reporting import (
+                            write_progress_snapshot,
+                        )
+
+                        agent_state = []
+                        for key, portfolio in agent_portfolios.items():
+                            agent_state.append(
+                                {
+                                    "profile": key[0],
+                                    "variant": key[1],
+                                    "cash": float(portfolio.cash),
+                                    "equity": float(eod_equity_by_key[key]),
+                                    "trade_count": trade_counts[key],
+                                    "starting_cash": starting_cash,
+                                }
+                            )
+                        write_progress_snapshot(
+                            run_id=run_id,
+                            snapshot_number=progress_counter,
+                            elapsed_seconds=now_mono - run_started_at,
+                            day_index=i,
+                            total_days=len(trading_days),
+                            current_day=today,
+                            agent_state=agent_state,
+                            output_base=settings.SIMULATION_OUTPUT_DIR,
+                        )
+                    except Exception:  # pylint: disable=broad-except
+                        # Must never kill the run; write_progress_snapshot
+                        # already logs its own internal exception, but we
+                        # also guard the import + call site.
+                        logger.exception(
+                            "Progress snapshot #%d failed", progress_counter
+                        )
+                    next_progress_at = now_mono + progress_interval
 
         # --------------- finalise agent rows + write reports ---------------
         from app.services.simulation.metrics import compute_agent_metrics

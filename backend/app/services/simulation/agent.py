@@ -80,17 +80,31 @@ class TraderAgent:
         profile: TraderProfile,
         variant: str,
         llm: _LLMLike | None = None,
+        structured_method: str | None = None,
     ):
+        """Args:
+            structured_method: Passed through to
+                ``llm.with_structured_output(method=...)``. ``None`` lets the
+                langchain chat model use its default (function-calling).
+                Set to ``"json_schema"`` for providers where
+                function-calling is unreliable (e.g. Fireworks Llama 3.3).
+        """
         self.profile = profile
         self.variant = variant
         self._llm = llm
+        self._structured_method = structured_method
         self._structured = None
 
     def _ensure_structured(self):
         if self._structured is None:
             if self._llm is None:
                 raise RuntimeError("TraderAgent has no LLM configured")
-            self._structured = self._llm.with_structured_output(OrderList)
+            if self._structured_method:
+                self._structured = self._llm.with_structured_output(
+                    OrderList, method=self._structured_method
+                )
+            else:
+                self._structured = self._llm.with_structured_output(OrderList)
         return self._structured
 
     def decide(

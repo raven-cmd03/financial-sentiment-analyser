@@ -1,0 +1,258 @@
+% Financial Sentiment Analyzer — tool overview (Beamer)
+% Build: pdflatex tool-overview.tex  (run twice for TOC)
+\documentclass[aspectratio=169,11pt]{beamer}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{graphicx}
+
+\usetheme{Madrid}
+\usecolortheme{default}
+
+\title{Financial Sentiment Analyzer}
+\subtitle{Architecture, pipeline, and backtest evaluation}
+\author{FYP / internal technical overview}
+\date{\today}
+
+\definecolor{codebg}{RGB}{248,248,255}
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  framerule=0.4pt,
+  rulecolor=\color{gray!60},
+  breaklines=true,
+  breakatwhitespace=true,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  tabsize=2,
+  keywordstyle=\color{blue!70!black},
+  commentstyle=\color{gray!70},
+  stringstyle=\color{teal!60!black},
+}
+
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue}
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+\end{frame}
+
+\begin{frame}{Outline}
+  \tableofcontents
+\end{frame}
+
+%-------------------------------------------------------------------------
+\section{Purpose and capabilities}
+
+\begin{frame}{What this tool does}
+  \begin{itemize}
+    \item \textbf{Ingests} financial news and links articles to \textbf{companies} (tickers).
+    \item \textbf{Scores sentiment} with a \textbf{FinBERT}-style transformer (base + optional \textbf{fine-tuned} weights).
+    \item \textbf{Stores} structured results in \textbf{PostgreSQL} (articles, scores, OHLCV, correlations).
+    \item \textbf{Serves} a \textbf{FastAPI} backend: trends, company sentiment, correlation metrics, optional social sentiment.
+    \item \textbf{Explains} context via \textbf{RAG chat} (embeddings + \textbf{Groq} LLM).
+    \item \textbf{Evaluates} the sentiment signal in a \textbf{long-horizon trading simulation} (LLM agents; treatment vs.\ control).
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Who it is for}
+  \begin{itemize}
+    \item \textbf{End users} (via frontend): explore news sentiment, trends, and chat with retrieved evidence.
+    \item \textbf{You (creator)}: offline artefacts --- fine-tuning jobs, \textbf{simulation reports} under \texttt{data/simulations/}, not exposed as a public product surface.
+  \end{itemize}
+\end{frame}
+
+%-------------------------------------------------------------------------
+\section{System architecture}
+
+\begin{frame}{High-level architecture}
+  \begin{center}
+    \small
+    \begin{tabular}{@{}l l@{}}
+      \toprule
+      \textbf{Layer} & \textbf{Components} \\
+      \midrule
+      Ingestion & Celery workers: news collection, market data, backfills \\
+      NLP & \texttt{SentimentAnalyzer} (FinBERT / active fine-tuned checkpoint) \\
+      Storage & PostgreSQL (articles, \texttt{sentiment\_results}, \texttt{market\_data}, \ldots) \\
+      Search / chat & Chroma + sentence embeddings; Groq for generation \\
+      API & FastAPI (\texttt{/api/news}, \texttt{/api/chat}, \texttt{/api/correlations}, \ldots) \\
+      Evaluation & Trader-agent \textbf{backtest} (optional Fireworks / Groq for decisions) \\
+      \bottomrule
+    \end{tabular}
+  \end{center}
+\end{frame}
+
+\begin{frame}[fragile]{API surface (excerpt)}
+  Routers are mounted in \texttt{app/main.py}:
+\begin{lstlisting}[language=Python]
+app.include_router(news.router, prefix="/api/news")
+app.include_router(chat.router, prefix="/api/chat")
+app.include_router(finetuning.router, prefix="/api/finetuning")
+app.include_router(simulations.router, prefix="/api/simulations")
+\end{lstlisting}
+  \vfill
+  \footnotesize Health: \texttt{GET /api/health} \quad Status (model names): \texttt{GET /api/status}
+\end{frame}
+
+%-------------------------------------------------------------------------
+\section{Sentiment pipeline}
+
+\begin{frame}{From raw article to score}
+  \begin{enumerate}
+    \item News rows live in \texttt{news\_articles} (title, content, \texttt{publication\_date}, \ldots).
+    \item \texttt{analyze\_sentiment\_task} batches texts through the active model.
+    \item Results persist to \texttt{sentiment\_results} (\texttt{sentiment\_label}, softmax scores, confidence).
+    \item Company linkage uses \texttt{article\_companies} so tickers can aggregate sentiment over time.
+  \end{enumerate}
+\end{frame}
+
+\begin{frame}[fragile]{Sentiment task (core idea)}
+\begin{lstlisting}[language=Python]
+# app/workers/tasks.py - batched GPU inference, idempotent writes
+texts = [f"{a.title}. {a.content}" if a.content else a.title
+         for a in articles]
+predictions = analyzer.batch_analyze(texts, batch_size=32)
+# ... map each prediction -> SentimentResult(article_id=..., ...)
+session.commit()
+\end{lstlisting}
+\end{frame}
+
+\begin{frame}{Fine-tuning (optional)}
+  \begin{itemize}
+    \item \textbf{Base model} configurable (e.g.\ FinBERT tone).
+    \item \textbf{Fine-tuning jobs} train on a parquet dataset; best checkpoint path stored on disk.
+    \item \textbf{Active model}: whichever job is marked active drives inference for new batches.
+    \item Keeps \textbf{label mapping} consistent between training and inference.
+  \end{itemize}
+\end{frame}
+
+%-------------------------------------------------------------------------
+\section{Simulation and evaluation}
+
+\begin{frame}{Why a trading simulation?}
+  \begin{itemize}
+    \item Measures whether \textbf{treatment} agents (with sentiment briefings) behave differently from \textbf{control} agents (prices/vol only).
+    \item \textbf{No look-ahead}: briefings use information available as of prior close; orders fill at the \textbf{open}.
+    \item \textbf{Long transaction}: results commit at end; \textbf{progress snapshots} every N seconds to disk.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{LLM provider for agents (excerpt)}
+\begin{lstlisting}[language=Python]
+# app/services/simulation/llm_provider.py
+if provider == "fireworks":
+    return ChatFireworks(
+        model=settings.FIREWORKS_MODEL,
+        api_key=settings.FIREWORKS_API_KEY,
+        request_timeout=timeout,
+        max_retries=max_retries,
+    )
+\end{lstlisting}
+  Structured decisions use \texttt{with\_structured\_output(OrderList, method="json\_schema")} on Fireworks.
+\end{frame}
+
+\begin{frame}[fragile]{Structured trade orders}
+\begin{lstlisting}[language=Python]
+# app/services/simulation/agent.py - Pydantic-enforced output
+class OrderList(BaseModel):
+    orders: list[StructuredOrder] = Field(default_factory=list)
+
+# LLM returns buy/sell, size_pct in [0,1], reasoning; engine applies clamps.
+\end{lstlisting}
+\end{frame}
+
+\begin{frame}{Progress artefacts}
+  \begin{itemize}
+    \item Directory: \texttt{data/simulations/<run\_id>/progress/}
+    \item Files: \texttt{snapshot\_NNNN.md/json}, \texttt{latest.md/json}
+    \item Cadence: \texttt{SIMULATION\_PROGRESS\_INTERVAL\_SEC} (e.g.\ 600\,s)
+  \end{itemize}
+\end{frame}
+
+%-------------------------------------------------------------------------
+\section{Initial backtest snapshot (run 4)}
+
+\begin{frame}{Snapshot context}
+  \footnotesize
+  Source: \texttt{data/simulations/4/progress/latest.md} (progress snapshot \#5). \\
+  \textbf{Note:} early in the backtest ($\sim$2\% of trading days); rankings are \emph{not} final conclusions.
+  \vfill
+  \begin{itemize}
+    \item Wall-clock (engine): \textbf{57m 20s} \quad ETA (reported): $\sim$\textbf{43h 30m}
+    \item Progress: \textbf{day 27 / 1256} (2.1\%) \quad Simulated date: \textbf{2021-06-01}
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Leaderboard excerpt (\texttt{latest.md})}
+  \footnotesize
+  \begin{tabular}{@{}r l l r r@{}}
+    \toprule
+    Rank & Profile & Variant & Equity & Return \\
+    \midrule
+    1 & value\_investor & treatment & \$1{,}038.54 & +3.85\% \\
+    2 & contrarian & treatment & \$1{,}022.91 & +2.29\% \\
+    3 & momentum\_investor & control & \$1{,}015.86 & +1.59\% \\
+    4 & contrarian & control & \$1{,}006.56 & +0.66\% \\
+    \ldots & \ldots & \ldots & \ldots & \ldots \\
+    12 & swing\_trader & control & \$959.61 & $-$4.04\% \\
+    \bottomrule
+  \end{tabular}
+\end{frame}
+
+\begin{frame}{Head-to-head: treatment $-$ control (early)}
+  \footnotesize
+  \begin{tabular}{@{}l r r r@{}}
+    \toprule
+    Profile & Treat.\ \% & Ctrl.\ \% & Lift \\
+    \midrule
+    value\_investor & +3.85 & +0.00 & +3.85 \\
+    contrarian & +2.29 & +0.66 & +1.64 \\
+    swing\_trader & $-$2.59 & $-$4.04 & +1.45 \\
+    news\_driven & $-$3.81 & $-$1.74 & $-$2.07 \\
+    momentum\_investor & +0.00 & +1.59 & $-$1.59 \\
+    day\_trader & $-$2.08 & $-$1.59 & $-$0.49 \\
+    \bottomrule
+  \end{tabular}
+
+  \vfill
+  \footnotesize Interpret with care: different \textbf{cadences} (daily vs.\ weekly agents), LLM noise, and fees/slippage model are simplified.
+\end{frame}
+
+%-------------------------------------------------------------------------
+\section{Operations and stack}
+
+\begin{frame}{Typical stack (Docker Compose)}
+  \begin{itemize}
+    \item \textbf{backend} --- FastAPI + FinBERT load
+    \item \textbf{celery-worker} --- sentiment, news, simulation tasks
+    \item \textbf{postgres}, \textbf{redis}, \textbf{chromadb}
+    \item Volumes: models, datasets, \texttt{./data/simulations} bind-mount for reports
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Takeaways}
+  \begin{itemize}
+    \item End-to-end: \textbf{news} $\rightarrow$ \textbf{FinBERT scores} $\rightarrow$ \textbf{APIs \& RAG} $\rightarrow$ \textbf{optional fine-tune}.
+    \item Internal \textbf{simulation} stress-tests whether sentiment briefings affect LLM trading vs.\ controls.
+    \item Early run~4 snapshot shows \textbf{mixed lift by profile}; wait for full \texttt{run\_summary.md}.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}
+  \centering
+  \vfill
+  {\Huge Questions?}
+  \vfill
+\end{frame}
+
+\end{document}

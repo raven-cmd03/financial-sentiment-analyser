@@ -56,7 +56,8 @@ services:
       - ./backend:/app
       - model_data:/app/data/models
       - dataset_data:/app/data/datasets
-      - simulation_data:/app/data/simulations
+      # Bind-mount so simulation reports land on the host (see .gitignore).
+      - ./data/simulations:/app/data/simulations
     depends_on:
       postgres:
         condition: service_healthy
@@ -97,7 +98,8 @@ services:
       - ./backend:/app
       - model_data:/app/data/models
       - dataset_data:/app/data/datasets
-      - simulation_data:/app/data/simulations
+      # Same host path as backend — worker writes simulation reports here.
+      - ./data/simulations:/app/data/simulations
     depends_on:
       postgres:
         condition: service_healthy
@@ -142,8 +144,13 @@ services:
       - ./frontend/src:/app/src
       - ./frontend/public:/app/public
     environment:
-      # Browser hits the nginx reverse proxy on :8080 → backend on :8000.
-      VITE_API_URL: http://localhost:8080/api
+      # Browser (on the host) calls the API directly on the published backend
+      # port. Using :8080 requires the nginx service to be up; :8001 works
+      # whenever the backend container is healthy (simulation unaffected).
+      VITE_API_URL: http://localhost:8001/api
+      # Vite dev-server /api proxy target inside this container (host npm uses
+      # vite.config default 127.0.0.1:8001 instead).
+      VITE_DEV_API_PROXY: http://backend:8000
       # Forwarded on every API call via the X-API-Key header. Must match
       # the backend API_KEY so protected routes (chat, finetuning, ws) work.
       VITE_API_KEY: ${API_KEY:-}
@@ -166,4 +173,3 @@ volumes:
   chroma_data:
   model_data:
   dataset_data:
-  simulation_data:

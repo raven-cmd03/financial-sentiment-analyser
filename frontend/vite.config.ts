@@ -1,10 +1,17 @@
 /// <reference types="vitest" />
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  // When running Vite on the Windows host, ``backend`` is not a resolvable
+  // hostname — proxy requests must go to the published Docker port instead.
+  const env = loadEnv(mode, process.cwd(), "");
+  const apiProxyTarget =
+    env.VITE_DEV_API_PROXY || "http://127.0.0.1:8001";
+
+  return {
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
@@ -23,7 +30,7 @@ export default defineConfig({
     },
     proxy: {
       "/api": {
-        target: "http://backend:8000",
+        target: apiProxyTarget,
         changeOrigin: true,
       },
     },
@@ -34,4 +41,5 @@ export default defineConfig({
     setupFiles: ["./src/test/setup.ts"],
     css: false,
   },
+};
 });
